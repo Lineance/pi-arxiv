@@ -10,7 +10,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +23,20 @@ const MINI = join(HERE, "fixtures", "mini-paper");
 const SOURCE = process.env["PI_ARXIV_FIXTURE_SOURCE"] ?? "D:/Code/Research/opd/papers/og-opd";
 const OUT = join(HERE, "_out");
 const GOLDEN = join(HERE, "..", "fixtures", "2609.35319", "expected.md");
+
+/**
+ * These tests are about the rule pipeline, so they must always run it.
+ *
+ * Without `cache: false` a second `npm test` would hit the cache left by the
+ * first and skip every rule: the suite would still pass while silently stopping
+ * to test the thing it exists for.
+ */
+const CONVERT = { cache: false } as const;
+
+beforeAll(async () => {
+	// Outputs persist between runs; clear them so nothing is read back by accident.
+	await rm(OUT, { recursive: true, force: true });
+});
 
 /** Each pattern is something the converter must never emit again. */
 const FORBIDDEN: Array<[RegExp, string]> = [
@@ -67,7 +81,10 @@ describe("the checked-in mini paper", () => {
 	let markdown = "";
 
 	beforeAll(async () => {
-		const result = await convertSourceDir({ workDir: MINI, outFile: join(OUT, "mini.md"), figures: false }, { exec: childProcessExec });
+		const result = await convertSourceDir(
+			{ workDir: MINI, outFile: join(OUT, "mini.md"), figures: false, ...CONVERT },
+			{ exec: childProcessExec },
+		);
 		expect(result.ok, result.warnings[0]?.message).toBe(true);
 		markdown = await readFile(result.markdownPath as string, "utf8");
 	});
@@ -122,7 +139,7 @@ describe("the checked-in mini paper", () => {
 describe.skipIf(!existsSync(SOURCE))("converting a real paper", () => {
 	it("produces Markdown that satisfies every invariant", async () => {
 		const result = await convertSourceDir(
-			{ workDir: SOURCE, outFile: join(OUT, "fixture.md"), figures: true, tableMode: "gfm" },
+			{ workDir: SOURCE, outFile: join(OUT, "fixture.md"), figures: true, tableMode: "gfm", ...CONVERT },
 			{ exec: childProcessExec },
 		);
 
@@ -140,7 +157,7 @@ describe.skipIf(!existsSync(SOURCE))("converting a real paper", () => {
 
 	it("reports what it had to repair", async () => {
 		const result = await convertSourceDir(
-			{ workDir: SOURCE, outFile: join(OUT, "fixture-stats.md"), figures: true },
+			{ workDir: SOURCE, outFile: join(OUT, "fixture-stats.md"), figures: true, ...CONVERT },
 			{ exec: childProcessExec },
 		);
 
@@ -152,7 +169,10 @@ describe.skipIf(!existsSync(SOURCE))("converting a real paper", () => {
 	});
 
 	it("matches the golden Markdown", async () => {
-		const result = await convertSourceDir({ workDir: SOURCE, outFile: join(OUT, "golden.md"), figures: true }, { exec: childProcessExec });
+		const result = await convertSourceDir(
+			{ workDir: SOURCE, outFile: join(OUT, "golden.md"), figures: true, ...CONVERT },
+			{ exec: childProcessExec },
+		);
 		const markdown = await readFile(result.markdownPath as string, "utf8");
 
 		await expect(markdown).toMatchFileSnapshot(GOLDEN);

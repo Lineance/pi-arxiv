@@ -31,10 +31,10 @@ export default defineConfig({
 			 * A threshold that only passes on one machine is a gate people learn to
 			 * bypass.
 			 *
-			 * Measured without that fixture (the CI case): lines 76.0, statements 73.8,
-			 * functions 77.1, branches 65.4. With it (locally, or in CI when the fetch
-			 * step succeeds): lines 77.2, statements 75.0, functions 78.1,
-			 * branches 66.4.
+			 * Measured without that fixture (the CI case): lines 77.7, statements 75.6,
+			 * functions 79.3, branches 67.2. With it (locally, or in CI when the fetch
+			 * step succeeds): lines 82.3, statements 80.2, functions 81.5,
+			 * branches 70.9.
 			 *
 			 * Each floor sits a point or so below the CI measurement, so the gate does
 			 * not fail on measurement noise. Raise them when the floor rises; never
@@ -47,10 +47,10 @@ export default defineConfig({
 			 * gate people silence.
 			 */
 			thresholds: {
-				lines: 75,
-				functions: 76,
-				statements: 73,
-				branches: 63,
+				lines: 76,
+				functions: 78,
+				statements: 74,
+				branches: 66,
 			},
 		},
 	},
