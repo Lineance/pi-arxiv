@@ -1,0 +1,108 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"files": {
+		"includes": ["extensions/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs", "*.json"]
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"lineWidth": 140,
+		"lineEnding": "lf"
+	},
+	"assist": {
+		"enabled": true,
+		"actions": {
+			"source": {
+				"organizeImports": "on"
+			}
+		}
+	},
+	"linter": {
+		"enabled": true,
+		"rules": {
+			"preset": "recommended",
+			"suspicious": {
+				"noConsole": "off",
+				"noExplicitAny": "error",
+				"noEmptyBlockStatements": "error",
+				"noImplicitAnyLet": "error",
+				"noAssignInExpressions": "error",
+				"useAwait": "error"
+			},
+			"style": {
+				"useConst": "error",
+				"useTemplate": "error",
+				"noNonNullAssertion": "error",
+				"noParameterAssign": "error",
+				"noInferrableTypes": "error",
+				"useAsConstAssertion": "error",
+				"useBlockStatements": "off"
+			},
+			"correctness": {
+				"noUnusedVariables": "error",
+				"noUnusedImports": "error",
+				"noVoidTypeReturn": "error",
+				"noConstantCondition": "error"
+			},
+			"complexity": {
+				"noBannedTypes": "error",
+				"noUselessConstructor": "error",
+				"noUselessRename": "error",
+				"noUselessTernary": "error",
+				"useLiteralKeys": "error",
+				"noExcessiveCognitiveComplexity": {
+					"level": "warn",
+					"options": {
+						"maxAllowedComplexity": 40
+					}
+				}
+			},
+			"performance": {
+				"noDelete": "error"
+			},
+			"security": {
+				"noDangerouslySetInnerHtml": "off"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double",
+			"semicolons": "always",
+			"trailingCommas": "all",
+			"arrowParentheses": "always",
+			"bracketSpacing": true
+		}
+	},
+	"json": {
+		"formatter": {
+			"enabled": true,
+			"indentStyle": "tab"
+		}
+	},
+	"overrides": [
+		{
+			"includes": ["tests/**/*.ts", "scripts/**/*.mjs"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noConsole": "off",
+						"useAwait": "off"
+					},
+					"style": {
+						"noNonNullAssertion": "off"
+					},
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off",
+						"useLiteralKeys": "off"
+					}
+				}
+			}
+		}
+	]
+}

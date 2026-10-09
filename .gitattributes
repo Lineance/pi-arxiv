@@ -1,0 +1,10 @@
+# Keep line endings LF everywhere. The linter enforces LF, the tests compare
+# generated Markdown byte-for-byte, and a CRLF checkout would break both.
+* text=auto eol=lf
+
+# Binary fixtures and rendered artifacts must never be normalised.
+*.png binary
+*.jpg binary
+*.pdf binary
+*.gz binary
+*.tar binary

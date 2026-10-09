@@ -1,0 +1,18 @@
+#!/bin/sh
+#
+# Fast gate: lint + typecheck + the suites that need no network and no external
+# LaTeX fixture. Keep this under a few seconds so it never tempts a --no-verify.
+#
+# Install once per clone:  npm run hooks:install
+#
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Skip when node_modules is missing (fresh clone before `npm install`).
+if [ ! -x node_modules/.bin/biome ]; then
+	echo "pre-commit: node_modules missing — run 'npm install && npm run dev:link'" >&2
+	exit 1
+fi
+
+exec npm run --silent verify

@@ -1,0 +1,9 @@
+# build/dev artifacts
+node_modules/
+tests/_out/
+tests/fixtures/_out/
+*.pandoc.md
+
+# OS
+.DS_Store
+Thumbs.db

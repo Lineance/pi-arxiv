@@ -1,0 +1,52 @@
+{
+	"name": "pi-arxiv",
+	"version": "0.1.0",
+	"description": "Pi extension: fetch arXiv papers (PDF + LaTeX e-print) and convert them into clean, KaTeX-safe Markdown.",
+	"type": "module",
+	"license": "MIT",
+	"private": true,
+	"keywords": [
+		"pi-package",
+		"pi-extension",
+		"arxiv",
+		"latex",
+		"pandoc",
+		"markdown",
+		"research"
+	],
+	"files": [
+		"README.md",
+		"CHANGELOG.md",
+		"extensions/",
+		"skills/"
+	],
+	"pi": {
+		"extensions": [
+			"./extensions/index.ts"
+		],
+		"skills": [
+			"./skills"
+		]
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.15",
+		"@types/node": "^22.20.5",
+		"typescript": "^5.9.3"
+	},
+	"scripts": {
+		"dev:link": "node scripts/link-host.mjs",
+		"hooks:install": "git config core.hooksPath .githooks",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write .",
+		"typecheck": "tsc --noEmit",
+		"test:unit": "node --experimental-strip-types tests/run.ts --unit",
+		"test": "node --experimental-strip-types tests/run.ts",
+		"test:network": "node --experimental-strip-types tests/run.ts --network",
+		"verify": "npm run lint && npm run typecheck && npm run test:unit",
+		"verify:full": "npm run lint && npm run typecheck && npm run test"
+	}
+}
