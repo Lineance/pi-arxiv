@@ -1,0 +1,13 @@
+{
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"entry": ["extensions/index.ts", "tests/**/*.spec.ts", "scripts/*.mjs"],
+	"project": ["extensions/**/*.ts", "tests/**/*.ts"],
+	"rules": {
+		"binaries": "off",
+		"unlisted": "off"
+	},
+	"vitest": {
+		"config": ["vitest.config.ts"]
+	},
+	"ignoreExportsUsedInFile": true
+}

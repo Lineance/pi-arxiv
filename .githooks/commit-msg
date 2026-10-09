@@ -1,0 +1,48 @@
+#!/bin/sh
+#
+# Enforce Conventional Commits so the history stays machine-readable (changelog
+# generation, release tooling, `git log --grep`).
+#
+# Implemented as a shell hook rather than commitlint+husky: the rule is a single
+# regex, and adding a dependency tree to check one line is not a good trade.
+#
+# Install once per clone:  npm run hooks:install
+#
+set -e
+
+message_file="$1"
+subject=$(head -n 1 "$message_file")
+
+# Allow the shapes git itself creates.
+case "$subject" in
+	"Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*) exit 0 ;;
+esac
+
+# type(scope)!: summary   —  scope and `!` optional, summary required.
+if printf '%s' "$subject" | grep -Eq '^[a-z]+(\([a-z0-9._/-]+\))?!?: .+'; then
+	:
+else
+	cat >&2 <<'EOF'
+commit-msg: the subject must follow Conventional Commits.
+
+  type(scope)!: summary
+
+  types:  feat fix docs style refactor perf test build ci chore revert
+  e.g.    feat(convert): rebuild multirow tables from LaTeX source
+          fix(pull)!: stop reusing a file that was never downloaded
+
+Use "!" or a "BREAKING CHANGE:" footer for an incompatible change.
+EOF
+	exit 1
+fi
+
+# A subject long enough to be truncated by tooling is usually doing too much.
+if [ "${#subject}" -gt 100 ]; then
+	echo "commit-msg: the subject is ${#subject} characters; keep it under 100." >&2
+	exit 1
+fi
+
+# A trailing period is noise in the log.
+case "$subject" in
+	*.) echo "commit-msg: drop the trailing period from the subject." >&2; exit 1 ;;
+esac

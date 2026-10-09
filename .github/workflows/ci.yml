@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# A queued run for an older commit has nothing to add once a newer one exists.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  npm_config_fund: "false"
+  npm_config_audit: "false"
+
+jobs:
+  verify:
+    name: verify (node ${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # pi requires >=22.19; 24 is the line this package is developed against.
+        node: ["22", "24"]
+        os: [ubuntu-latest]
+        include:
+          # Windows differs in shell, path handling and process spawning, which is
+          # exactly what this extension touches. One job is enough to catch that
+          # class of bug without doubling the matrix.
+          - node: "24"
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # The external toolchain the converter drives. Without pandoc there is no
+      # conversion; poppler supplies pdftoppm and pdftotext.
+      - name: Install pandoc and poppler (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc poppler-utils
+
+      - name: Install pandoc and poppler (Windows)
+        if: runner.os == 'Windows'
+        run: choco install pandoc poppler -y --no-progress
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm ci` installs devDependencies only. The packages pi injects at runtime
+      # are peerDependencies on purpose — a committed copy risks duplicate module
+      # instances inside pi — so CI installs them without touching package.json.
+      - name: Install host-provided peers
+        run: npm install --no-save --no-audit --no-fund @earendil-works/pi-coding-agent@^1 typebox@^1
+
+      - name: Verify toolchain
+        run: npx pandoc --version && npx pdftoppm -v
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Try to obtain the full-size fixture through the package's own pipeline.
+      # Its success raises coverage but is never required: the thresholds are set
+      # to hold without it, so an arXiv outage cannot fail the build.
+      - name: Fetch the optional full-size fixture
+        id: fixture
+        continue-on-error: true
+        shell: bash
+        run: |
+          if dir=$(node scripts/fetch-fixture.mjs 2>/dev/null); then
+            echo "PI_ARXIV_FIXTURE_SOURCE=$dir" >> "$GITHUB_ENV"
+            echo "using external fixture: $dir"
+          else
+            echo "external fixture unavailable; running the reduced suite"
+          fi
+
+      - name: Test with coverage
+        run: npm run test:coverage
+
+      - name: Upload coverage
+        if: always() && runner.os == 'Linux' && matrix.node == '24'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          if-no-files-found: ignore
+          retention-days: 7
