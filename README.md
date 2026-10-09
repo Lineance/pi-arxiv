@@ -72,6 +72,7 @@ arxiv_pull  { query: "Outcome-Guided On-Policy Distillation..." }   # by title
 arxiv_lookup    { query: "2609.35319" }                   # metadata only, no download
 papers_index    {}                                        # what is on disk, what is missing
 paper_markdown  { sourceDir: "./my-paper" }               # any local LaTeX directory
+paper_markdown  { sourceDir: "./my-paper", force: true }   # ignore the conversion cache
 paper_toolchain {}                                        # pandoc / pdftoppm / pdftotext
 ```
 
@@ -106,7 +107,7 @@ CLI flags for one invocation: `--arxiv-dir=<path>`, `--arxiv-no-figures`, `--arx
 
 ## Behaviour and guarantees
 
-- **Idempotent.** Re-running reuses the PDF/source by file size and only rewrites the Markdown; `force: true` re-downloads.
+- **Idempotent.** Re-running reuses the PDF/source by file size, and skips the conversion when nothing that affects it changed (source digest, pandoc version, and the relevant options). `force: true` re-downloads and reconverts; `cache: false` disables reuse; deleting `<paper>.md.cache.json` forces a rebuild.
 - **Resilient downloads.** Every request has a per-attempt timeout and bounded retry with backoff (connection timeouts, resets, DNS failures, 408/429/5xx). 4xx other than 429 fails fast. Failures name the URL and the cause.
 - **Safe by construction.** The e-print archive is unpacked by an in-tree reader that refuses absolute paths, drive letters, `..`, and symlinks; LaTeX is never compiled, so `\write18` cannot execute anything.
 - **Polite to arXiv.** Metadata requests are serialized with a ≥3 s gap and a descriptive User-Agent (the API's stated requirement).
@@ -130,6 +131,7 @@ Commits) hooks.
 
 | Suite | Covers |
 |---|---|
+| `cache` | conversion reuse: what invalidates it, and that it does not invalidate itself by writing its own output |
 | `unit` | arXiv id parsing, LaTeX counter replay, label numbering, brace/tabular parsing, macro expansion, caption labelling, archive path-traversal refusal |
 | `api` | Atom parsing with a stubbed `fetch`: entities, optional fields, malformed feeds, HTTP failures |
 | `http` | retry policy, timeout wiring, status handling, cancellation, error text |

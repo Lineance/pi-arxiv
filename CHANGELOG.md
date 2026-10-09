@@ -25,6 +25,12 @@ Initial release.
 - `papers_index` — corpus inventory and health report (missing artifacts, stale
   Markdown, corrupt manifest, pre-`<id>/` layout). Read-only.
 
+- Conversion cache: a second conversion of unchanged source is skipped. The cache
+  records the source digest, the pandoc version, and the options that affect the
+  output, so it is invalidated by a source edit (or rename), a toolchain upgrade,
+  or a changed table mode / figure setting — and not by a checkout or by the
+  converter's own output. `paper_markdown` and `arxiv_pull` accept `force`.
+
 ### Tooling
 
 - Tests run on vitest, with coverage thresholds pinned to the floor CI reaches.

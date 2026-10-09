@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { TableMode } from "./types.ts";
 
-export const LIB_VERSION = "0.1.0";
+export { LIB_VERSION } from "./version.ts";
 
 export interface ArxivConfig {
 	papersDir: string;

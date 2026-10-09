@@ -6,6 +6,8 @@
 import { basename, dirname, join, relative, resolve } from "node:path";
 import type { ConvertOptions, ConvertResult, ConvertStats, ConvertWarning, ExecLike, ExecOptionsLike, ExecResultLike } from "../types.ts";
 import { exists, writeFileQueued } from "../util/fsx.ts";
+import { LIB_VERSION } from "../version.ts";
+import { buildEntry, cachePathFor, digestSources, findValidCache, outputExclusions, toolchainVersions, writeCache } from "./cache.ts";
 import { analyzeSourceDir, type TexAnalysis } from "./latex.ts";
 import { runPandoc } from "./pandoc.ts";
 import { lintMarkdown, rules } from "./rules/index.ts";
@@ -56,6 +58,24 @@ export async function convertSourceDir(
 		return { ok: false, figures: [], stats, warnings: [{ rule: "convert", level: "error", message: (error as Error).message }] };
 	}
 
+	const outFile = resolve(options.outFile ?? join(workDir, `${basename(workDir)}.md`));
+
+	// Reuse a previous conversion when nothing that affects it changed.
+	const cacheEnabled = (options.cache ?? true) && !options.force;
+	if (cacheEnabled) {
+		const reuse = await findValidCache(outFile, await currentInputs(workDir, outFile, options, io));
+		if (reuse) {
+			return {
+				ok: true,
+				markdownPath: reuse.markdownPath,
+				figures: reuse.figures,
+				stats: reuse.stats,
+				warnings: [...reuse.warnings, { rule: "cache", level: "info", message: `reused the conversion from ${reuse.convertedAt}` }],
+				cached: true,
+			};
+		}
+	}
+
 	const pandoc = await runPandoc(io, {
 		workDir,
 		mainTexFile: relative(workDir, analysis.mainFile).split("\\").join("/"),
@@ -64,7 +84,6 @@ export async function convertSourceDir(
 	warnings.push(...pandoc.warnings);
 	if (!pandoc.ok) return { ok: false, figures: [], stats, warnings };
 
-	const outFile = resolve(options.outFile ?? join(workDir, `${basename(workDir)}.md`));
 	const state: ConvertState = {
 		markdown: pandoc.markdown.replace(/\r\n?/g, "\n"),
 		analysis,
@@ -94,6 +113,11 @@ export async function convertSourceDir(
 		await writeFileQueued(rawMarkdownPath, pandoc.markdown);
 	}
 
+	// Record the inputs only after a successful write, so an interrupted run
+	// cannot leave a cache entry describing a file that was never produced.
+	const inputs = await currentInputs(workDir, outFile, options, io);
+	await writeCache(cachePathFor(outFile), buildEntry(inputs, { markdownPath: outFile, stats, figures: state.figureFiles, warnings }));
+
 	return {
 		ok: true,
 		markdownPath: outFile,
@@ -101,6 +125,25 @@ export async function convertSourceDir(
 		figures: state.figureFiles,
 		stats,
 		warnings,
+	};
+}
+
+/** Everything a conversion's output depends on. */
+async function currentInputs(
+	workDir: string,
+	outFile: string,
+	options: ConvertOptions,
+	io: { exec: ExecLike },
+): Promise<Parameters<typeof buildEntry>[0]> {
+	return {
+		sourceDigest: await digestSources(workDir, outputExclusions(outFile, workDir)),
+		toolchain: await toolchainVersions(io.exec),
+		options: {
+			figures: options.figures ?? true,
+			figureDpi: options.figureDpi ?? 150,
+			tableMode: options.tableMode ?? "gfm",
+			libVersion: LIB_VERSION,
+		},
 	};
 }
 

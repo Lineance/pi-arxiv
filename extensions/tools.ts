@@ -198,6 +198,8 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 							figureDpi: config.figureDpi,
 							tableMode: config.tableMode,
 							arxivMeta: meta,
+							// A forced pull re-downloads, so its conversion must not be reused.
+							force: params.force,
 						},
 						{ exec, log: (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined }) },
 					);
@@ -259,6 +261,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 				figures: Type.Optional(Type.Boolean({ description: "Rasterize figure PDFs to PNG" })),
 				tableMode: Type.Optional(Type.String({ description: "gfm (default) or html" })),
 				keepIntermediate: Type.Optional(Type.Boolean({ description: "Also write the raw pandoc output next to the result" })),
+				force: Type.Optional(Type.Boolean({ description: "Convert even when a cached conversion is still valid" })),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 			outputSchema: Type.Object({
@@ -287,11 +290,13 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 						figureDpi: config.figureDpi,
 						tableMode: params.tableMode === "html" ? "html" : config.tableMode,
 						keepIntermediate: params.keepIntermediate,
+						force: params.force,
 					},
 					{ exec },
 				);
 				const text = [
 					result.ok ? `markdown: ${result.markdownPath}` : "conversion failed",
+					result.cached ? "cached: reused an unchanged conversion (pass force=true to convert again)" : "",
 					result.ok ? `stats: ${summarizeStats(result.stats)}` : "",
 					result.figures.length > 0 ? `figures: ${result.figures.length}` : "",
 					...warningLines(result.warnings),

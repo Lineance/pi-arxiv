@@ -105,6 +105,8 @@ export default function piArxiv(pi: ExtensionAPI) {
 							figureDpi: config.figureDpi,
 							tableMode: config.tableMode,
 							arxivMeta: meta,
+							// A forced pull re-downloads, so its conversion must not be reused.
+							force: args.force,
 						},
 						{ exec },
 					);
