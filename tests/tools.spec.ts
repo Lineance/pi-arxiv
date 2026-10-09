@@ -151,17 +151,27 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the five tools", () => {
+	it("registers the six tools", () => {
 		const { tools } = loadTools();
-		expect([...tools.keys()].sort()).toEqual(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain", "papers_index"]);
+		expect([...tools.keys()].sort()).toEqual([
+			"arxiv_lookup",
+			"arxiv_pull",
+			"paper_markdown",
+			"paper_section",
+			"paper_toolchain",
+			"papers_index",
+		]);
 	});
 
-	it.each(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain", "papers_index"])("%s is model-usable", (name) => {
-		const definition = loadTools().tools.get(name);
-		expect(definition?.description.length).toBeGreaterThan(40);
-		expect(definition?.parameters).toBeDefined();
-		expect(definition?.annotations).toBeDefined();
-	});
+	it.each(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_section", "paper_toolchain", "papers_index"])(
+		"%s is model-usable",
+		(name) => {
+			const definition = loadTools().tools.get(name);
+			expect(definition?.description.length).toBeGreaterThan(40);
+			expect(definition?.parameters).toBeDefined();
+			expect(definition?.annotations).toBeDefined();
+		},
+	);
 });
 
 describe("flag registration", () => {

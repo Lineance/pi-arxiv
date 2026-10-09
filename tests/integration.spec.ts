@@ -16,7 +16,7 @@ const HERE = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ENTRY = join(HERE, "extensions", "index.ts");
 
 /** The tools the package promises to expose. */
-const EXPECTED_TOOLS = ["arxiv_lookup", "arxiv_pull", "paper_markdown", "papers_index", "paper_toolchain"];
+const EXPECTED_TOOLS = ["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_section", "papers_index", "paper_toolchain"];
 const EXPECTED_FLAGS = ["arxiv-dir", "arxiv-no-figures", "arxiv-table-mode"];
 
 let isolatedAgentDir: string;
@@ -54,7 +54,7 @@ describe("extension loading", () => {
 		expect([...(loaded.extensions[0]?.flags.keys() ?? [])]).toContain(name);
 	});
 
-	it("exposes only the five documented tools", () => {
+	it("exposes only the six documented tools", () => {
 		expect([...(loaded.extensions[0]?.tools.keys() ?? [])].sort()).toEqual([...EXPECTED_TOOLS].sort());
 	});
 });
