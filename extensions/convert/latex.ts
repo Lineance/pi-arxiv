@@ -134,51 +134,102 @@ const SYMBOL_MACROS: Array<[RegExp, string]> = [
 	[/\\&/g, "&"],
 ];
 
-/** Expand `\macro{a}{b}` style wrappers, innermost-first, repeatedly. */
+/** A located macro invocation: its span in the text and its brace arguments. */
+interface MacroCall {
+	start: number;
+	/** Index just past the last consumed argument. */
+	end: number;
+	args: string[];
+}
+
+/**
+ * Skip over optional `[...]` arguments. Returns the offset after them, or
+ * `undefined` when a bracket is opened but never closed.
+ */
+function skipOptionalArgs(text: string, from: number): number | undefined {
+	let cursor = from;
+	while (text[cursor] === "[") {
+		const close = text.indexOf("]", cursor);
+		if (close < 0) return undefined;
+		cursor = close + 1;
+	}
+	return cursor;
+}
+
+/**
+ * Find the next well-formed call of `macro` at or after `from`.
+ *
+ * A call is well-formed when the name is followed by a brace (or optional args
+ * and then a brace) and every one of the macro's arguments is present. Anything
+ * else is left untouched: `\texttt` must not be mistaken for `\text`, and a
+ * half-written macro must not corrupt the text.
+ */
+function findMacroCall(text: string, macro: UnwrapMacro, from: number): MacroCall | undefined {
+	const needle = `\\${macro.name}`;
+	let search = from;
+	while (search < text.length) {
+		const start = text.indexOf(needle, search);
+		if (start < 0) return undefined;
+
+		const next = start + needle.length;
+		const after = text[next] ?? "";
+		if (after !== "{" && after !== "[" && !/\s/.test(after)) {
+			search = next;
+			continue;
+		}
+
+		const afterOptionals = skipOptionalArgs(text, next);
+		if (afterOptionals === undefined) return undefined;
+		let cursor: number = afterOptionals;
+
+		const args: string[] = [];
+		for (let i = 0; i < macro.arity; i++) {
+			while (/\s/.test(text[cursor] ?? "")) cursor++;
+			const group = text[cursor] === "{" ? readBraced(text, cursor) : undefined;
+			if (!group) {
+				args.length = 0;
+				break;
+			}
+			args.push(group.content);
+			cursor = group.end;
+		}
+		if (args.length === macro.arity) return { start, end: cursor, args };
+		search = next;
+	}
+	return undefined;
+}
+
+/** Expand every call of one macro, left to right. */
+function expandMacro(input: string, macro: UnwrapMacro): { text: string; changed: boolean } {
+	let text = input;
+	let changed = false;
+	let cursor = 0;
+	while (cursor < text.length) {
+		const call = findMacroCall(text, macro, cursor);
+		if (!call) break;
+		const replacement = macro.wrap ? macro.wrap(call.args) : (call.args[call.args.length - 1] ?? "");
+		text = text.slice(0, call.start) + replacement + text.slice(call.end);
+		cursor = call.start + replacement.length;
+		changed = true;
+	}
+	return { text, changed };
+}
+
+/**
+ * Expand `\macro{a}{b}` style wrappers, innermost-first, repeatedly until the
+ * text stops changing. Bounded by `maxPasses` so a self-referential macro
+ * definition cannot spin forever.
+ */
 export function expandBracedMacros(input: string, macros: UnwrapMacro[] = INLINE_MACROS, maxPasses = 8): string {
 	let text = input;
 	for (let pass = 0; pass < maxPasses; pass++) {
-		let changed = false;
+		let changedThisPass = false;
 		for (const macro of macros) {
-			const needle = `\\${macro.name}`;
-			let from = 0;
-			while (true) {
-				const at = text.indexOf(needle, from);
-				if (at < 0) break;
-				const after = text[at + needle.length] ?? "";
-				if (after !== "{" && after !== "[" && !/\s/.test(after)) {
-					from = at + needle.length;
-					continue;
-				}
-				let cursor = at + needle.length;
-				while (text[cursor] === "[") {
-					const close = text.indexOf("]", cursor);
-					if (close < 0) break;
-					cursor = close + 1;
-				}
-				const args: string[] = [];
-				let ok = true;
-				for (let i = 0; i < macro.arity; i++) {
-					while (/\s/.test(text[cursor] ?? "")) cursor++;
-					const group = text[cursor] === "{" ? readBraced(text, cursor) : undefined;
-					if (!group) {
-						ok = false;
-						break;
-					}
-					args.push(group.content);
-					cursor = group.end;
-				}
-				if (!ok) {
-					from = at + needle.length;
-					continue;
-				}
-				const replacement = macro.wrap ? macro.wrap(args) : (args[args.length - 1] ?? "");
-				text = text.slice(0, at) + replacement + text.slice(cursor);
-				changed = true;
-				from = at + replacement.length;
-			}
+			const result = expandMacro(text, macro);
+			text = result.text;
+			changedThisPass ||= result.changed;
 		}
-		if (!changed) break;
+		if (!changedThisPass) break;
 	}
 	return text;
 }
@@ -298,243 +349,312 @@ export async function loadTexGraph(
 	return { text, files };
 }
 
-const TOKEN_RE = new RegExp(
-	[
-		"\\\\appendix\\b",
-		`\\\\begin\\{(?:equation\\*?|align\\*?|alignat\\*?|gather\\*?|multline\\*?|eqnarray\\*?|figure\\*?|wrapfigure|sidewaysfigure|SCfigure|table\\*?|sidewaystable|longtable|abstract|${TABULAR_ENVS})\\}(?:\\[[^\\]]*\\]|\\{[^{}]*\\})*`,
-		`\\\\end\\{(?:equation\\*?|align\\*?|alignat\\*?|gather\\*?|multline\\*?|eqnarray\\*?|figure\\*?|wrapfigure|sidewaysfigure|SCfigure|table\\*?|sidewaystable|longtable|abstract|${TABULAR_ENVS})\\}`,
-		"\\\\subsubsection\\*?\\{",
-		"\\\\subsection\\*?\\{",
-		"\\\\section\\*?\\{",
-		"\\\\captionsetup\\{",
-		"\\\\caption\\{",
-		"\\\\label\\{[^}]*\\}",
-		"\\\\includegraphics(?:\\[[^\\]]*\\])?\\{",
-		"\\\\bibliography\\{",
-		"\\\\title\\{",
-		"\\\\author(?:\\[[^\\]]*\\])?\\{",
-		"\\\\affil(?:\\[[^\\]]*\\])?\\{",
-	].join("|"),
-	"g",
-);
+/**
+ * The token vocabulary the scanner recognises, built fresh per call so there is
+ * no shared `lastIndex` state between analyses.
+ */
+function tokenRegex(): RegExp {
+	return new RegExp(
+		[
+			"\\\\appendix\\b",
+			`\\\\begin\\{(?:equation\\*?|align\\*?|alignat\\*?|gather\\*?|multline\\*?|eqnarray\\*?|figure\\*?|wrapfigure|sidewaysfigure|SCfigure|table\\*?|sidewaystable|longtable|abstract|${TABULAR_ENVS})\\}(?:\\[[^\\]]*\\]|\\{[^{}]*\\})*`,
+			`\\\\end\\{(?:equation\\*?|align\\*?|alignat\\*?|gather\\*?|multline\\*?|eqnarray\\*?|figure\\*?|wrapfigure|sidewaysfigure|SCfigure|table\\*?|sidewaystable|longtable|abstract|${TABULAR_ENVS})\\}`,
+			"\\\\subsubsection\\*?\\{",
+			"\\\\subsection\\*?\\{",
+			"\\\\section\\*?\\{",
+			"\\\\captionsetup\\{",
+			"\\\\caption\\{",
+			"\\\\label\\{[^}]*\\}",
+			"\\\\includegraphics(?:\\[[^\\]]*\\])?\\{",
+			"\\\\bibliography\\{",
+			"\\\\title\\{",
+			"\\\\author(?:\\[[^\\]]*\\])?\\{",
+			"\\\\affil(?:\\[[^\\]]*\\])?\\{",
+		].join("|"),
+		"g",
+	);
+}
+
+/** Mutable state threaded through the token handlers. */
+interface ScanState {
+	flattened: string;
+	labels: LabelMaps;
+	outline: OutlineEntry[];
+	figureCaptions: string[];
+	tableCaptions: string[];
+	tables: ParsedTable[];
+	graphics: string[];
+	bibFiles: string[];
+	authors: string[];
+	affiliations: string[];
+	counters: { eq: number; fig: number; tab: number; sec: number; sub: number; subsub: number };
+	appendix: boolean;
+	appendixIndex: number;
+	/** Set by `\captionsetup{type=table}` so the next `\caption` takes a table number. */
+	forcedTableCaption: boolean;
+	abstract: string | undefined;
+	title: string | undefined;
+	envStack: string[];
+	currentTable: ParsedTable | undefined;
+}
+
+type TokenHandler = (state: ScanState, match: RegExpExecArray) => void;
+
+/** The `{...}` immediately after a token that ends in `{`. */
+function groupAfterToken(state: ScanState, match: RegExpExecArray): string | undefined {
+	return readBraced(state.flattened, match.index + match[0].length - 1)?.content;
+}
+
+/** The `{...}` that follows optional `[...]` arguments, e.g. `\author[1]{...}`. */
+function groupAtLastBrace(state: ScanState, match: RegExpExecArray): string | undefined {
+	const brace = match[0].lastIndexOf("{");
+	return brace < 0 ? undefined : readBraced(state.flattened, match.index + brace)?.content;
+}
+
+function currentSection(state: ScanState): string {
+	const base = state.appendix ? letterFor(state.appendixIndex) : String(state.counters.sec);
+	if (state.counters.sub > 0) {
+		return `${base}.${state.counters.sub}${state.counters.subsub > 0 ? `.${state.counters.subsub}` : ""}`;
+	}
+	return base;
+}
+
+function pushOutline(state: ScanState, level: 1 | 2 | 3, starred: boolean, rawTitle: string): void {
+	state.outline.push({
+		level,
+		title: latexInlineToMarkdown(rawTitle),
+		number: starred ? undefined : currentSection(state),
+		appendix: state.appendix,
+	});
+}
+
+const TABULAR_BARE = new Set(["tabular", "tabularx", "tabular*", "tabularx*"]);
+
+function handleAppendix(state: ScanState): void {
+	state.appendix = true;
+	state.counters.sec = 0;
+	state.counters.sub = 0;
+	state.counters.subsub = 0;
+	state.appendixIndex = -1;
+}
+
+function handleBegin(state: ScanState, match: RegExpExecArray): void {
+	const env = match[0].slice(7, match[0].indexOf("}"));
+	state.envStack.push(env);
+	const bare = env.replace(/\*$/, "");
+
+	// LaTeX steps the figure/table counters at \caption, but the equation
+	// counter at \begin — so only equations are counted here.
+	if (NUMBERED_EQ_ENVS.has(env) && !env.endsWith("*")) {
+		state.counters.eq++;
+	} else if (bare === "abstract") {
+		const end = state.flattened.indexOf("\\end{abstract}", match.index + match[0].length);
+		if (end > 0) state.abstract = state.flattened.slice(match.index + match[0].length, end).trim();
+	} else if (TABULAR_BARE.has(bare)) {
+		state.currentTable = { tex: "", rows: [], columns: 0, environment: bare };
+	}
+}
+
+function handleEnd(state: ScanState, match: RegExpExecArray): void {
+	const env = match[0].slice(5, match[0].indexOf("}"));
+	const bare = env.replace(/\*$/, "");
+	if (TABULAR_BARE.has(bare) && state.currentTable) {
+		state.tables.push(state.currentTable);
+		state.currentTable = undefined;
+	}
+	const at = state.envStack.lastIndexOf(env);
+	if (at >= 0) state.envStack.splice(at, 1);
+}
+
+function handleSection(state: ScanState, match: RegExpExecArray): void {
+	const starred = match[0].includes("*");
+	if (!starred) {
+		state.counters.sec++;
+		state.counters.sub = 0;
+		state.counters.subsub = 0;
+		if (state.appendix) state.appendixIndex++;
+	}
+	pushOutline(state, 1, starred, groupAfterToken(state, match) ?? "");
+}
+
+function handleSubsection(state: ScanState, match: RegExpExecArray): void {
+	const starred = match[0].includes("*");
+	if (!starred) {
+		state.counters.sub++;
+		state.counters.subsub = 0;
+	}
+	pushOutline(state, 2, starred, groupAfterToken(state, match) ?? "");
+}
+
+function handleSubsubsection(state: ScanState, match: RegExpExecArray): void {
+	const starred = match[0].includes("*");
+	if (!starred) state.counters.subsub++;
+	pushOutline(state, 3, starred, groupAfterToken(state, match) ?? "");
+}
+
+function handleTitle(state: ScanState, match: RegExpExecArray): void {
+	const content = groupAfterToken(state, match);
+	if (content) state.title = latexInlineToMarkdown(content);
+}
+
+function handleAuthor(state: ScanState, match: RegExpExecArray): void {
+	const content = groupAtLastBrace(state, match);
+	if (!content) return;
+	for (const part of content.split(/\\and|,(?![^{]*\})|;/)) {
+		const name = latexInlineToMarkdown(part)
+			.replace(/[*\u2020\u2021]/g, "")
+			.trim();
+		if (name) state.authors.push(name);
+	}
+}
+
+function handleAffiliation(state: ScanState, match: RegExpExecArray): void {
+	const content = groupAtLastBrace(state, match);
+	if (content) state.affiliations.push(latexInlineToMarkdown(content));
+}
+
+function handleCaptionSetup(state: ScanState, match: RegExpExecArray): void {
+	// `\captionsetup{type=table}` inside a figure float makes the next caption a
+	// table caption; LaTeX then numbers it in the table counter.
+	if (/type\s*=\s*table/.test(groupAfterToken(state, match) ?? "")) state.forcedTableCaption = true;
+}
+
+function handleCaption(state: ScanState, match: RegExpExecArray): void {
+	const inline = latexInlineToMarkdown(groupAfterToken(state, match) ?? "");
+	const tableish = state.forcedTableCaption || state.envStack.some((env) => TABLE_ENVS.has(env));
+	state.forcedTableCaption = false;
+
+	if (tableish) {
+		state.counters.tab++;
+		state.tableCaptions.push(inline);
+		if (state.currentTable && !state.currentTable.caption) state.currentTable.caption = inline;
+	} else {
+		state.counters.fig++;
+		state.figureCaptions.push(inline);
+	}
+}
+
+function handleIncludeGraphics(state: ScanState, match: RegExpExecArray): void {
+	const content = groupAfterToken(state, match);
+	if (content) state.graphics.push(content.trim());
+}
+
+function handleBibliography(state: ScanState, match: RegExpExecArray): void {
+	const content = groupAfterToken(state, match);
+	if (!content) return;
+	state.bibFiles.push(
+		...content
+			.split(",")
+			.map((name) => name.trim())
+			.filter(Boolean),
+	);
+}
+
+function handleLabel(state: ScanState, match: RegExpExecArray): void {
+	const key = match[0].slice(7, match[0].length - 1);
+	const [prefix] = key.split(":");
+	let kind: LabelKind = "other";
+	let value: string;
+	switch (prefix) {
+		case "eq":
+		case "alg":
+			value = String(state.counters.eq);
+			kind = prefix as LabelKind;
+			break;
+		case "fig":
+			value = String(state.counters.fig);
+			kind = "fig";
+			break;
+		case "tab":
+			value = String(state.counters.tab);
+			kind = "tab";
+			break;
+		case "sec":
+			value = currentSection(state);
+			kind = "sec";
+			break;
+		case "app":
+			value = currentSection(state);
+			kind = "app";
+			break;
+		default:
+			value = currentSection(state);
+	}
+	state.labels.all.set(key, value);
+	state.labels.kind.set(key, kind);
+}
+
+/**
+ * Dispatch by command name rather than by prefix: prefix matching would make
+ * `\captionsetup` collide with `\caption` and silently depend on rule order.
+ */
+const TOKEN_HANDLERS: Record<string, TokenHandler> = {
+	appendix: handleAppendix,
+	begin: handleBegin,
+	end: handleEnd,
+	section: handleSection,
+	subsection: handleSubsection,
+	subsubsection: handleSubsubsection,
+	title: handleTitle,
+	author: handleAuthor,
+	affil: handleAffiliation,
+	captionsetup: handleCaptionSetup,
+	caption: handleCaption,
+	includegraphics: handleIncludeGraphics,
+	bibliography: handleBibliography,
+	label: handleLabel,
+};
+
+const COMMAND_RE = /^\\([a-zA-Z]+)/;
+
+function commandOf(token: string): string | undefined {
+	return COMMAND_RE.exec(token)?.[1];
+}
 
 /** Replay LaTeX counters and collect everything the Markdown rules need. */
 export function analyzeTex(flattened: string, mainFile: string, sourceFiles: string[]): TexAnalysis {
-	const labels: LabelMaps = { all: new Map(), kind: new Map() };
-	const outline: OutlineEntry[] = [];
-	const figureCaptions: string[] = [];
-	const tableCaptions: string[] = [];
-	const tables: ParsedTable[] = [];
-	const graphics: string[] = [];
-	const bibFiles: string[] = [];
-	const authors: string[] = [];
-	const affiliations: string[] = [];
-
-	const counters = { eq: 0, fig: 0, tab: 0, sec: 0, sub: 0, subsub: 0 };
-	let appendix = false;
-	let appendixIndex = -1;
-	let forcedTableCaption = false;
-	let abstract: string | undefined;
-	let title: string | undefined;
-	const envStack: string[] = [];
-	let currentTable: ParsedTable | undefined;
-
-	const currentSection = (): string => {
-		const base = appendix ? letterFor(appendixIndex) : String(counters.sec);
-		if (counters.sub > 0) return `${base}.${counters.sub}${counters.subsub > 0 ? `.${counters.subsub}` : ""}`;
-		return base;
+	const state: ScanState = {
+		flattened,
+		labels: { all: new Map(), kind: new Map() },
+		outline: [],
+		figureCaptions: [],
+		tableCaptions: [],
+		tables: [],
+		graphics: [],
+		bibFiles: [],
+		authors: [],
+		affiliations: [],
+		counters: { eq: 0, fig: 0, tab: 0, sec: 0, sub: 0, subsub: 0 },
+		appendix: false,
+		appendixIndex: -1,
+		forcedTableCaption: false,
+		abstract: undefined,
+		title: undefined,
+		envStack: [],
+		currentTable: undefined,
 	};
 
-	const pushOutline = (level: 1 | 2 | 3, starred: boolean, rawTitle: string): void => {
-		outline.push({
-			level,
-			title: latexInlineToMarkdown(rawTitle),
-			number: starred ? undefined : currentSection(),
-			appendix,
-		});
-	};
-
-	TOKEN_RE.lastIndex = 0;
-	for (const match of flattened.matchAll(TOKEN_RE)) {
-		const token = match[0];
-		if (token.startsWith("\\appendix")) {
-			appendix = true;
-			counters.sec = 0;
-			counters.sub = 0;
-			counters.subsub = 0;
-			appendixIndex = -1;
-			continue;
-		}
-		if (token.startsWith("\\begin{")) {
-			const env = token.slice(7, token.indexOf("}"));
-			envStack.push(env);
-			const bare = env.replace(/\*$/, "");
-			// LaTeX steps figure/table counters at \caption; equations at \begin.
-			if (NUMBERED_EQ_ENVS.has(env) && !env.endsWith("*")) counters.eq++;
-			else if (bare === "abstract") {
-				const end = flattened.indexOf("\\end{abstract}", match.index + token.length);
-				if (end > 0) abstract = flattened.slice(match.index + token.length, end).trim();
-			} else if (bare === "tabular" || bare === "tabularx" || bare === "tabular*" || bare === "tabularx*") {
-				currentTable = { tex: "", rows: [], columns: 0, environment: bare };
-			}
-			continue;
-		}
-		if (token.startsWith("\\end{")) {
-			const env = token.slice(5, token.indexOf("}"));
-			const bare = env.replace(/\*$/, "");
-			if ((bare === "tabular" || bare === "tabularx" || bare === "tabular*") && currentTable) {
-				tables.push(currentTable);
-				currentTable = undefined;
-			}
-			const at = envStack.lastIndexOf(env);
-			if (at >= 0) envStack.splice(at, 1);
-			continue;
-		}
-		if (token.startsWith("\\section")) {
-			const starred = token.includes("*");
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (!starred) {
-				counters.sec++;
-				counters.sub = 0;
-				counters.subsub = 0;
-				if (appendix) appendixIndex++;
-			}
-			pushOutline(1, starred, group?.content ?? "");
-			continue;
-		}
-		if (token.startsWith("\\subsection")) {
-			const starred = token.includes("*");
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (!starred) {
-				counters.sub++;
-				counters.subsub = 0;
-			}
-			pushOutline(2, starred, group?.content ?? "");
-			continue;
-		}
-		if (token.startsWith("\\subsubsection")) {
-			const starred = token.includes("*");
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (!starred) counters.subsub++;
-			pushOutline(3, starred, group?.content ?? "");
-			continue;
-		}
-		if (token === "\\title{") {
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (group) title = latexInlineToMarkdown(group.content);
-			continue;
-		}
-		if (token.startsWith("\\author")) {
-			const brace = token.lastIndexOf("{");
-			const group = readBraced(flattened, match.index + brace);
-			if (group) {
-				for (const part of group.content.split(/\\and|,(?![^{]*\})|;/)) {
-					const name = latexInlineToMarkdown(part)
-						.replace(/[*\u2020\u2021]/g, "")
-						.trim();
-					if (name) authors.push(name);
-				}
-			}
-			continue;
-		}
-		if (token.startsWith("\\affil")) {
-			const brace = token.lastIndexOf("{");
-			const group = readBraced(flattened, match.index + brace);
-			if (group?.content) affiliations.push(latexInlineToMarkdown(group.content));
-			continue;
-		}
-		if (token === "\\captionsetup{") {
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (/type\s*=\s*table/.test(group?.content ?? "")) forcedTableCaption = true;
-			continue;
-		}
-		if (token === "\\caption{") {
-			const group = readBraced(flattened, match.index + token.length - 1);
-			const inline = latexInlineToMarkdown(group?.content ?? "");
-			const tableish = forcedTableCaption || envStack.some((env) => TABLE_ENVS.has(env));
-			forcedTableCaption = false;
-			if (tableish) {
-				counters.tab++;
-				tableCaptions.push(inline);
-				if (currentTable && !currentTable.caption) currentTable.caption = inline;
-			} else {
-				counters.fig++;
-				figureCaptions.push(inline);
-			}
-			continue;
-		}
-		if (token.startsWith("\\includegraphics")) {
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (group?.content) graphics.push(group.content.trim());
-			continue;
-		}
-		if (token === "\\bibliography{") {
-			const group = readBraced(flattened, match.index + token.length - 1);
-			if (group?.content)
-				bibFiles.push(
-					...group.content
-						.split(",")
-						.map((name) => name.trim())
-						.filter(Boolean),
-				);
-			continue;
-		}
-		if (token.startsWith("\\label{")) {
-			const key = token.slice(7, token.length - 1);
-			const [prefix] = key.split(":");
-			let value: string | undefined;
-			let kind: LabelKind = "other";
-			switch (prefix) {
-				case "eq":
-					value = String(counters.eq);
-					kind = "eq";
-					break;
-				case "fig":
-					value = String(counters.fig);
-					kind = "fig";
-					break;
-				case "tab":
-					value = String(counters.tab);
-					kind = "tab";
-					break;
-				case "sec":
-					value = currentSection();
-					kind = "sec";
-					break;
-				case "app":
-					value = currentSection();
-					kind = "app";
-					break;
-				case "alg":
-					value = String(counters.eq);
-					kind = "alg";
-					break;
-				default:
-					value = currentSection();
-			}
-			if (value) {
-				labels.all.set(key, value);
-				labels.kind.set(key, kind);
-			}
-		}
+	for (const match of flattened.matchAll(tokenRegex())) {
+		const command = commandOf(match[0]);
+		if (command) TOKEN_HANDLERS[command]?.(state, match);
 	}
 
 	return {
 		mainFile,
 		sourceFiles,
 		flattened,
-		abstract,
-		title,
-		authors,
-		affiliations,
-		labels,
-		outline,
-		figureCaptions,
-		tableCaptions,
-		tables,
-		graphics,
-		bibFiles,
-		hasAppendix: appendix,
+		abstract: state.abstract,
+		title: state.title,
+		authors: state.authors,
+		affiliations: state.affiliations,
+		labels: state.labels,
+		outline: state.outline,
+		figureCaptions: state.figureCaptions,
+		tableCaptions: state.tableCaptions,
+		tables: state.tables,
+		graphics: state.graphics,
+		bibFiles: state.bibFiles,
+		hasAppendix: state.appendix,
 	};
 }
 
