@@ -46,9 +46,13 @@ export const headingsRule: Rule = {
 				missed++;
 				continue;
 			}
-			if (new RegExp(`^${hashes}\\s+(?:Appendix\\s+)?\\d|^${hashes}\\s+(?:Appendix\\s+)?[A-Z](?:\\.\\d+)?\\s`).test(lines[i] ?? ""))
-				continue;
+			// Compare against the number we are about to write instead of guessing from
+			// the shape of the heading. A regex on the title cannot tell a numbered
+			// heading from prose that merely starts with a capital letter, so
+			// "A lemma" used to look already-numbered and stayed bare.
 			const prefix = hit.appendix && hashes.length === 1 ? `Appendix ${hit.number}.` : hit.number;
+			if (title === prefix || title.startsWith(`${prefix} `) || title.startsWith(`${prefix}.`)) continue;
+
 			lines[i] = `${hashes} ${prefix} ${title}`;
 			applied++;
 		}

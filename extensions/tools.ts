@@ -137,7 +137,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			],
 			parameters: Type.Object({
 				query: Type.String({ description: "arXiv id, URL, or title" }),
-				dir: Type.Optional(Type.String({ description: "Destination directory (default: <papersDir>/<id>)" })),
+				destDir: Type.Optional(Type.String({ description: "Directory for this paper (default: <papersDir>/<id>)" })),
 				version: Type.Optional(Type.String({ description: "Pin a version, e.g. v1 (default: latest)" })),
 				parts: Type.Optional(
 					Type.Array(Type.String({ description: "pdf | source | abs" }), { description: "Which parts to download (default all)" }),
@@ -159,7 +159,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			}),
 			async execute(_id, params, signal, onUpdate, ctx: ExtensionToolContext) {
 				const config = resolveConfig(pi, ctx.cwd, {
-					papersDir: params.dir ? resolve(ctx.cwd, params.dir) : undefined,
+					papersDir: params.destDir ? resolve(ctx.cwd, params.destDir) : undefined,
 					figures: params.figures,
 				});
 				const byId = parseArxivId(params.query);
@@ -168,7 +168,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 				const meta = matches[0];
 				if (!meta) return { content: [{ type: "text", text: `No arXiv match for: ${params.query}` }], details: undefined };
 
-				const destDir = params.dir ? resolve(ctx.cwd, params.dir) : join(config.papersDir, meta.id);
+				const destDir = params.destDir ? resolve(ctx.cwd, params.destDir) : join(config.papersDir, meta.id);
 				const parts = (params.parts ?? ["pdf", "source", "abs"]).filter(
 					(part): part is "pdf" | "source" | "abs" => part === "pdf" || part === "source" || part === "abs",
 				);

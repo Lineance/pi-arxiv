@@ -7,14 +7,29 @@ import type { ArxivMeta } from "../types.ts";
 import { fetchWithRetry, type HttpOptions } from "../util/http.ts";
 
 const API_ENDPOINT = "https://export.arxiv.org/api/query";
-const MIN_INTERVAL_MS = 3_000;
+
+/** arXiv asks for a gap between requests; production keeps it, tests set 0. */
+export const DEFAULT_MIN_INTERVAL_MS = 3_000;
+
+export interface ArxivApiOptions extends HttpOptions {
+	/**
+	 * Minimum gap between requests, serialized across the process.
+	 *
+	 * Configurable rather than a module constant because the queue is global: a
+	 * request scheduled now may run seconds later, after the caller's ambient
+	 * state (a stubbed `fetch`, a proxy) has changed. Tests set 0 to keep request
+	 * boundaries inside the test that issued them.
+	 */
+	minIntervalMs?: number | undefined;
+}
 
 let queue: Promise<unknown> = Promise.resolve();
 let lastRequestAt = 0;
 
-function scheduled<T>(task: () => Promise<T>): Promise<T> {
+/** Run `task` after the polite gap, serialized with every other request. */
+function scheduled<T>(task: () => Promise<T>, minIntervalMs: number): Promise<T> {
 	const run = queue.then(async () => {
-		const wait = MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
+		const wait = minIntervalMs - (Date.now() - lastRequestAt);
 		if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
 		try {
 			return await task();
@@ -115,18 +130,19 @@ function toMeta(entry: string): ArxivMeta | undefined {
 	};
 }
 
-async function fetchAtom(query: string, options: HttpOptions = {}): Promise<string> {
+async function fetchAtom(query: string, options: ArxivApiOptions = {}): Promise<string> {
+	const { minIntervalMs = DEFAULT_MIN_INTERVAL_MS, ...http } = options;
 	return await scheduled(async () => {
 		const response = await fetchWithRetry(`${API_ENDPOINT}?${query}`, {
 			headers: { accept: "application/atom+xml" },
-			...options,
+			...http,
 		});
 		return await response.text();
-	});
+	}, minIntervalMs);
 }
 
 /** Exact-id lookup. Returns metadata for the requested id (latest version unless pinned). */
-export async function lookupById(idOrUrl: string, options: HttpOptions = {}): Promise<ArxivMeta> {
+export async function lookupById(idOrUrl: string, options: ArxivApiOptions = {}): Promise<ArxivMeta> {
 	const parsed = parseArxivId(idOrUrl);
 	if (!parsed) throw new Error(`Not an arXiv id or URL: ${idOrUrl}`);
 	const params = new URLSearchParams({ id_list: parsed.id, max_results: "1" });
@@ -138,7 +154,7 @@ export async function lookupById(idOrUrl: string, options: HttpOptions = {}): Pr
 }
 
 /** Title search; returns the best candidate list (title matching on arXiv is fuzzy). */
-export async function searchByTitle(title: string, limit = 3, options: HttpOptions = {}): Promise<ArxivMeta[]> {
+export async function searchByTitle(title: string, limit = 3, options: ArxivApiOptions = {}): Promise<ArxivMeta[]> {
 	const cleaned = title
 		.replace(/[$\\{}*_`~^]/g, " ")
 		.replace(/\s+/g, " ")

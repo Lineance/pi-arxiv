@@ -44,19 +44,20 @@ export async function exists(path: string): Promise<boolean> {
 	}
 }
 
-export async function isDir(path: string): Promise<boolean> {
-	try {
-		return (await stat(path)).isDirectory();
-	} catch {
-		return false;
-	}
-}
-
 export async function sizeOf(path: string): Promise<number> {
 	try {
 		return (await stat(path)).size;
 	} catch {
 		return -1;
+	}
+}
+
+/** Modification time in milliseconds, or `0` when the path is unreadable. */
+export async function statOf(path: string): Promise<number> {
+	try {
+		return (await stat(path)).mtimeMs;
+	} catch {
+		return 0;
 	}
 }
 

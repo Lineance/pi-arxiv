@@ -690,12 +690,24 @@ const ROW_SEPARATOR_RE = /\\(?:hline|toprule|midrule|bottomrule|cmidrule\s*(?:\(
 /** `\multicolumn{n}{spec}{content}` — expanded horizontally so rows stay column-aligned. */
 const MULTICOLUMN_RE = /^\s*\\multicolumn\s*\{(\d+)\}\s*\{[^{}]*\}\s*\{([\s\S]*)\}\s*$/;
 
+/** A row that draws its meaning from a cell spanning several columns or rows. */
+const SPANNING_CELL_RE = /\\(?:multicolumn|multirow)\b/;
+
+export interface ParsedTabularBody {
+	rows: string[][];
+	columns: number;
+	/** Indices of rows containing a \\multicolumn or \\multirow, i.e. group headers. */
+	groupRows: number[];
+}
+
 /** Parse one tabular body into sanitized cells. */
-export function parseTabularBody(body: string): { rows: string[][]; columns: number } {
+export function parseTabularBody(body: string): ParsedTabularBody {
 	const rows: string[][] = [];
+	const groupRows: number[] = [];
 	for (const rawRow of splitTopLevel(body, "\\\\")) {
 		const stripped = rawRow.replace(ROW_SEPARATOR_RE, " ").trim();
 		if (!stripped) continue;
+		const islanding = SPANNING_CELL_RE.test(stripped);
 		const cells = splitTopLevel(stripped, "&").flatMap((raw) => {
 			const span = MULTICOLUMN_RE.exec(raw);
 			if (span) {
@@ -705,10 +717,11 @@ export function parseTabularBody(body: string): { rows: string[][]; columns: num
 			return [cleanCell(raw)];
 		});
 		if (cells.every((cell) => cell === "")) continue;
+		if (islanding) groupRows.push(rows.length);
 		rows.push(cells);
 	}
 	const columns = rows.reduce((max, row) => Math.max(max, row.length), 0);
-	return { rows, columns };
+	return { rows, columns, groupRows };
 }
 
 /** Attach parsed rows to every tabular collected by `analyzeTex`. */
@@ -733,7 +746,12 @@ export function parseTablesFromTex(flattened: string, tables: ParsedTable[]): Pa
 
 	return tables.map((table, index) => {
 		const parsed = parseTabularBody(bodies[index] ?? "");
-		return { ...table, tex: bodies[index] ?? "", rows: flattenGroupHeader(parsed.rows), columns: parsed.columns };
+		return {
+			...table,
+			tex: bodies[index] ?? "",
+			rows: flattenGroupHeader(parsed.rows, parsed.groupRows),
+			columns: parsed.columns,
+		};
 	});
 }
 
@@ -741,17 +759,29 @@ export function parseTablesFromTex(flattened: string, tables: ParsedTable[]): Pa
  * Two-level LaTeX headers have no GFM equivalent: carry the group label forward
  * and merge it with the sub-header, e.g. ["", "ALFWorld", …] + ["Method", "Seen SR", …]
  * → ["Method", "ALFWorld Seen SR", …].
+ *
+ * A row is a group header when it is mostly empty (a plain group row) or when it
+ * was built from a \\multicolumn/\\multirow. The second signal matters because
+ * `\multirow{2}{*}{Method}` puts real content in the first row, so "mostly
+ * empty" alone would leave `| Method | Benchmark |` beside `| Success |` —
+ * losing the group label instead of merging it.
  */
-export function flattenGroupHeader(rows: string[][]): string[][] {
+export function flattenGroupHeader(rows: string[][], groupRows: number[] = []): string[][] {
 	if (rows.length < 2) return rows;
+
 	const out = [...rows];
+	const isGroup = out.map((_row, index) => groupRows.includes(index));
+
 	let guard = 0;
 	while (out.length >= 2 && guard++ < 3) {
 		const group = out[0] ?? [];
 		const next = out[1] ?? [];
 		const columns = Math.max(group.length, next.length);
 		const filled = group.filter((cell) => cell !== "").length;
-		if (filled === 0 || filled > columns / 2) break;
+		const sparse = filled > 0 && filled <= columns / 2;
+		const spanning = isGroup[0] === true;
+		if ((!sparse && !spanning) || filled === 0) break;
+
 		const merged: string[] = [];
 		let carry = "";
 		for (let i = 0; i < columns; i++) {
@@ -760,7 +790,12 @@ export function flattenGroupHeader(rows: string[][]): string[][] {
 			const head = (next[i] ?? "").trim();
 			merged.push([carry, head].filter(Boolean).join(" ").trim());
 		}
+		// The outer row's flag is consumed by this merge. The merged row is itself a
+		// group header only when the row it absorbed was one too, which is exactly
+		// the three-level-header case.
+		const mergedIsGroup = isGroup[1] === true;
 		out.splice(0, 2, merged);
+		isGroup.splice(0, 2, mergedIsGroup);
 	}
 	return out;
 }

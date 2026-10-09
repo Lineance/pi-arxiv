@@ -17,4 +17,4 @@ import type { Rule } from "./types.ts";
 export const rules: Rule[] = [figuresRule, mathRule, tablesRule, captionsRule, headingsRule, refsRule, textRule, structureRule];
 
 export { lintMarkdown } from "./text.ts";
-export type { ConvertState, Rule } from "./types.ts";
+export type { Rule } from "./types.ts";

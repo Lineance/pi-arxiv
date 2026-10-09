@@ -19,7 +19,7 @@ import { writeFileQueued } from "./util/fsx.ts";
 
 interface CommandArgs {
 	query: string;
-	dir?: string;
+	papersDir?: string;
 	force: boolean;
 	convert: boolean;
 	figures?: boolean;
@@ -34,7 +34,7 @@ function parseArgs(input: string): CommandArgs {
 		if (token === "--force") args.force = true;
 		else if (token === "--no-convert") args.convert = false;
 		else if (token === "--no-figures") args.figures = false;
-		else if (token.startsWith("--dir=")) args.dir = token.slice(6);
+		else if (token.startsWith("--papers-dir=")) args.papersDir = token.slice("--papers-dir=".length);
 		else if (token.startsWith("--version=")) args.version = token.slice(10);
 		else rest.push(token);
 	}
@@ -59,11 +59,11 @@ export default function piArxiv(pi: ExtensionAPI) {
 
 	pi.registerCommand("arxiv", {
 		description:
-			"Fetch an arXiv paper and convert it to Markdown (usage: /arxiv <id|url|title> [--force] [--no-convert] [--no-figures] [--dir=path] [--version=v1])",
+			"Fetch an arXiv paper and convert it to Markdown (usage: /arxiv <id|url|title> [--force] [--no-convert] [--no-figures] [--papers-dir=path] [--version=v1])",
 		handler: async (input: string, ctx: ExtensionCommandContext) => {
 			const args = parseArgs(input);
 			if (!args.query) {
-				ctx.ui.notify("Usage: /arxiv <id|url|title> [--force] [--no-convert] [--no-figures] [--dir=path]", "error");
+				ctx.ui.notify("Usage: /arxiv <id|url|title> [--force] [--no-convert] [--no-figures] [--papers-dir=path]", "error");
 				return;
 			}
 			if (!parseArxivId(args.query)) {
@@ -78,7 +78,7 @@ export default function piArxiv(pi: ExtensionAPI) {
 					onRetry: (attempt, error) => ctx.ui.notify(`retry ${attempt}: ${error.message}`, "info"),
 				});
 				const config = resolveConfig(pi, ctx.cwd, {
-					papersDir: args.dir ? resolve(ctx.cwd, args.dir) : undefined,
+					papersDir: args.papersDir ? resolve(ctx.cwd, args.papersDir) : undefined,
 					figures: args.figures,
 				});
 				const destDir = join(config.papersDir, meta.id);
