@@ -1,5 +1,6 @@
 /**
- * Model-facing tools: arxiv_lookup / arxiv_pull / paper_markdown.
+ * Model-facing tools: arxiv_lookup / arxiv_pull / paper_markdown / papers_index
+ * plus paper_toolchain.
  *
  * Results keep the model-facing text short (paths, counts, warnings) and carry
  * the structured payload in `details` + `structuredContent`; the full Markdown
@@ -14,6 +15,7 @@ import { lookupById, parseArxivId, searchByTitle } from "./arxiv/api.ts";
 import { pull } from "./arxiv/pull.ts";
 import { LIB_VERSION, resolveConfig } from "./cfg.ts";
 import { convertSourceDir, summarizeStats, summarizeWarnings } from "./convert/convert.ts";
+import { type CorpusBadge, formatReport, indexPapers, issueBadge } from "./corpus/index-papers.ts";
 import type { ArxivMeta, ConvertResult, ConvertWarning, ExecLike } from "./types.ts";
 import { writeFileQueued } from "./util/fsx.ts";
 import { detectToolchain } from "./util/toolchain.ts";
@@ -303,6 +305,74 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 						...(result.markdownPath ? { markdownPath: result.markdownPath } : {}),
 						stats: statsJson(result.stats),
 						warnings: warningJson(result.warnings),
+					},
+				};
+			},
+		}),
+	);
+
+	// ------------------------------------------------------------ papers_index
+	pi.registerTool(
+		defineTool({
+			name: "papers_index",
+			label: "Paper corpus index",
+			description:
+				"Inventory the local paper corpus: how many papers are present, which lack a PDF, LaTeX source or converted Markdown, which have a Markdown older than its source, and which are left over from the older flat layout. Read-only — it reports, it never repairs.",
+			promptSnippet: "papers_index — list the local paper corpus and what each entry is missing",
+			promptGuidelines: [
+				"Run papers_index before assuming a paper is already downloaded: it reports which entries lack a converted Markdown.",
+			],
+			parameters: Type.Object({
+				includeHealthy: Type.Optional(
+					Type.Boolean({ description: "List healthy papers too (default true); false shows only entries needing attention" }),
+				),
+			}),
+			annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+			outputSchema: Type.Object({
+				papersDir: Type.String(),
+				total: Type.Number(),
+				broken: Type.Number(),
+				incomplete: Type.Number(),
+				legacy: Type.Array(Type.String()),
+				entries: Type.Array(
+					Type.Object({
+						id: Type.String(),
+						status: Type.String(),
+						hasPdf: Type.Boolean(),
+						hasSource: Type.Boolean(),
+						hasMarkdown: Type.Boolean(),
+						issues: Type.Array(Type.String()),
+					}),
+				),
+			}),
+			async execute(_id, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+				const config = resolveConfig(pi, ctx.cwd);
+				const report = await indexPapers(config.papersDir);
+				const render = formatReport(report, { includeHealthy: params.includeHealthy ?? true });
+
+				const counts = new Map<CorpusBadge, number>();
+				for (const entry of report.entries) {
+					const badge = issueBadge(entry);
+					counts.set(badge, (counts.get(badge) ?? 0) + 1);
+				}
+
+				return {
+					content: [{ type: "text", text: render }],
+					details: { report },
+					structuredContent: {
+						papersDir: report.papersDir,
+						total: report.entries.length,
+						broken: counts.get("error") ?? 0,
+						incomplete: counts.get("warn") ?? 0,
+						legacy: report.legacy,
+						entries: report.entries.map((entry) => ({
+							id: entry.id,
+							status: issueBadge(entry),
+							hasPdf: Boolean(entry.pdf),
+							hasSource: Boolean(entry.sourceDir),
+							hasMarkdown: Boolean(entry.markdown),
+							issues: entry.issues.map((issue) => issue.message),
+						})),
 					},
 				};
 			},

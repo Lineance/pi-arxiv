@@ -69,9 +69,10 @@ In the agent:
 arxiv_pull  { query: "2609.35319" }                       # download + convert
 arxiv_pull  { query: "https://arxiv.org/abs/2609.35319", figures: false }
 arxiv_pull  { query: "Outcome-Guided On-Policy Distillation..." }   # by title
-paper_markdown { sourceDir: "./my-paper" }                # convert any local LaTeX dir
-paper_toolchain {}                                        # check pandoc/poppler
-arxiv_lookup { query: "2609.35319" }                       # metadata only, no download
+arxiv_lookup    { query: "2609.35319" }                   # metadata only, no download
+papers_index    {}                                        # what is on disk, what is missing
+paper_markdown  { sourceDir: "./my-paper" }               # any local LaTeX directory
+paper_toolchain {}                                        # pandoc / pdftoppm / pdftotext
 ```
 
 Or as a command:
@@ -79,8 +80,11 @@ Or as a command:
 ```
 /arxiv 2609.35319
 /arxiv https://arxiv.org/abs/2609.35319 --force --no-figures
-/arxiv 2609.35319 --dir=D:/papers --version=v2
+/arxiv 2609.35319 --papers-dir=D:/papers --version=v2
 ```
+
+`--papers-dir` overrides the corpus root, so the paper keeps its `<id>/` layout;
+the `arxiv_pull` tool's `destDir` names one paper's own directory.
 
 ## Configuration
 
@@ -112,28 +116,39 @@ CLI flags for one invocation: `--arxiv-dir=<path>`, `--arxiv-no-figures`, `--arx
 ## Development
 
 ```bash
-node --experimental-strip-types tests/run.ts            # all offline suites
-node --experimental-strip-types tests/run.ts --unit     # unit + http + pull only
-node --experimental-strip-types tests/run.ts --fixture  # end-to-end conversion only
-node --experimental-strip-types tests/run.ts --integration  # extension loading only
-node --experimental-strip-types tests/run.ts --network  # also exercise the real arXiv API
-node --experimental-strip-types tests/run.ts --write     # refresh the golden Markdown
-npx tsc --noEmit                                        # typecheck
+npm install && npm run dev:link && npm run hooks:install   # once per clone
+npm run verify          # lint + typecheck + knip + tests with coverage
+npm run test:watch      # TDD loop
+npm run test:network    # additionally exercise the live arXiv API
+npm run lint:fix        # format and apply safe fixes
 ```
+
+`dev:link` links pi's host-provided packages into `node_modules` rather than
+depending on them: a committed copy risks duplicate module instances inside pi.
+`hooks:install` wires the pre-commit (verify) and commit-msg (Conventional
+Commits) hooks.
 
 | Suite | Covers |
 |---|---|
 | `unit` | arXiv id parsing, LaTeX counter replay, label numbering, brace/tabular parsing, macro expansion, caption labelling, archive path-traversal refusal |
+| `api` | Atom parsing with a stubbed `fetch`: entities, optional fields, malformed feeds, HTTP failures |
 | `http` | retry policy, timeout wiring, status handling, cancellation, error text |
-| `pull` | full download → extract → manifest path against a stubbed `fetch` (first run, reuse, force, part filtering, HTTP failure, single-`.tex` e-print) |
-| `fixture` | end-to-end conversion of a real paper |
+| `pull` | download → extract → manifest against a stubbed `fetch` (first run, reuse, force, part filtering, HTTP failure, single-`.tex` e-print) |
+| `index-papers` | corpus classification: missing artifacts, corrupt manifest, staleness, legacy layout |
+| `tools` | config precedence and every tool, through a faked `pi` |
+| `extension` | the `/arxiv` command end to end |
 | `integration` | pi's own extension loader: tools, command and flags register cleanly |
-| `network` | live arXiv API lookup, search, download, convert, re-pull (opt-in) |
+| `fixture` | conversion invariants, against a checked-in mini paper plus an optional full-size one |
+| `network` | live arXiv lookup, search, download, convert, re-pull (opt-in) |
 
-The end-to-end fixture converts a real paper and asserts the invariants above
-(no leftover `\ref` anchors, no raw float HTML, tables rebuilt, captions restored,
-`\ref` numbering matching the PDF). Set `PI_ARXIV_FIXTURE_SOURCE=/path/to/paper`
-to point it at another LaTeX source directory.
+The fixture suite asserts the invariants above (no leftover `\ref` anchors, no
+raw float HTML, tables rebuilt, captions restored, reference numbers matching the
+PDF). `tests/fixtures/mini-paper/` is checked in so this runs in CI;
+`PI_ARXIV_FIXTURE_SOURCE=/path/to/paper` adds a full-size paper locally.
+
+Coverage thresholds in `vitest.config.ts` are a ratchet pinned to the floor CI
+reaches, so the gate is meaningful on every machine rather than only where the
+optional fixture exists.
 
 ### Layout
 
@@ -144,6 +159,7 @@ extensions/
 ├── tools.ts                 # the four model-facing tools
 ├── arxiv/api.ts             # Atom API: lookup by id, search by title
 ├── arxiv/pull.ts            # download + manifest
+├── corpus/index-papers.ts   # corpus inventory and health report
 ├── convert/latex.ts         # LaTeX analysis: counters, labels, outline, tabulars
 ├── convert/pandoc.ts        # pandoc invocation
 ├── convert/convert.ts       # driver
@@ -155,10 +171,13 @@ extensions/
     ├── toolchain.ts         # pandoc / pdftoppm / pdftotext detection
     └── fsx.ts               # queued writes, hashing, directory scanning
 tests/
-├── run.ts                   # orchestrator
-├── unit.ts http.ts pull.ts fixture.ts integration.ts network.ts
-└── harness.ts               # assertions
+├── *.spec.ts                # one suite per thing that can break
+├── fixtures/mini-paper/     # checked-in LaTeX paper for the end-to-end path
+└── helpers/fixtures.ts      # tar and fetch builders
 ```
+
+Gated on every commit by `.githooks/pre-commit`, and in CI by
+`.github/workflows/ci.yml` (node 22 and 24, Linux plus one Windows job).
 
 Adding a repair means adding one `Rule` with an `id` and a `description`; the
 driver runs them in order and aggregates their warnings into the report.

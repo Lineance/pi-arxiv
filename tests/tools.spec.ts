@@ -151,12 +151,12 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the four tools", () => {
+	it("registers the five tools", () => {
 		const { tools } = loadTools();
-		expect([...tools.keys()].sort()).toEqual(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain"]);
+		expect([...tools.keys()].sort()).toEqual(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain", "papers_index"]);
 	});
 
-	it.each(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain"])("%s is model-usable", (name) => {
+	it.each(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_toolchain", "papers_index"])("%s is model-usable", (name) => {
 		const definition = loadTools().tools.get(name);
 		expect(definition?.description.length).toBeGreaterThan(40);
 		expect(definition?.parameters).toBeDefined();
@@ -191,6 +191,35 @@ describe("arxiv_lookup tool", () => {
 		const result = await callTool(tools, "arxiv_lookup", { query: "nothing at all here" }, root);
 
 		expect(result.content[0]?.text).toContain("No arXiv match");
+	});
+});
+
+describe("papers_index tool", () => {
+	it("reports an empty corpus without failing", async () => {
+		const result = await callTool(loadTools().tools, "papers_index", {}, root);
+
+		expect(result.structuredContent).toMatchObject({ total: 0, broken: 0, incomplete: 0 });
+		expect(result.content[0]?.text).toContain("all healthy");
+	});
+
+	it("classifies a complete and an incomplete paper", async () => {
+		const papersDir = join(root, "papers");
+		await mkdir(join(papersDir, "2609.00001", "source"), { recursive: true });
+		await writeFile(join(papersDir, "2609.00001", "2609.00001.pdf"), "%PDF");
+		await writeFile(join(papersDir, "2609.00001", "source", "main.tex"), "\\documentclass{article}");
+		await writeFile(join(papersDir, "2609.00001", "source", "2609.00001.md"), "# md");
+		await writeFile(join(papersDir, "2609.00001", "manifest.json"), JSON.stringify({ title: "Complete", version: "v1" }));
+		await mkdir(join(papersDir, "2609.00002"), { recursive: true });
+		await writeFile(join(papersDir, "2609.00002", "2609.00002.pdf"), "%PDF");
+
+		const { tools } = loadTools({ settings: { arxiv: { papersDir } } });
+		const result = await callTool(tools, "papers_index", {}, root);
+		const structured = result.structuredContent as { total: number; broken: number; entries: Array<{ id: string; status: string }> };
+
+		expect(structured.total).toBe(2);
+		expect(structured.broken).toBe(1);
+		expect(structured.entries.find((entry) => entry.id === "2609.00001")?.status).toBe("ok");
+		expect(structured.entries.find((entry) => entry.id === "2609.00002")?.status).toBe("error");
 	});
 });
 

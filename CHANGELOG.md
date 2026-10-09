@@ -22,4 +22,17 @@ Initial release.
 - In-tree tar/gzip extraction with path-traversal refusal; no runtime npm dependencies.
 - Shared HTTP layer: per-attempt timeout, bounded retry with backoff for transient
   failures (connect timeouts, resets, DNS, 408/429/5xx); fast-fail on other 4xx.
-- 183 tests: unit, http, pull (stubbed fetch), end-to-end fixture, extension loading.
+- `papers_index` — corpus inventory and health report (missing artifacts, stale
+  Markdown, corrupt manifest, pre-`<id>/` layout). Read-only.
+
+### Tooling
+
+- Tests run on vitest, with coverage thresholds pinned to the floor CI reaches.
+- `knip` gates dead exports and unused dependencies.
+- `.githooks/pre-commit` runs `verify`; `.githooks/commit-msg` enforces
+  Conventional Commits.
+- `.github/workflows/ci.yml` verifies on Node 22 and 24, plus Windows, and tries
+  to fetch a full-size fixture through this package's own pipeline.
+- Deployment notes: the command flag is `--papers-dir` (corpus root) and the
+  `arxiv_pull` parameter is `destDir` (one paper's directory); these were
+  previously both called `dir` with different meanings.
