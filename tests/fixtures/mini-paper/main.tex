@@ -1,0 +1,95 @@
+% Minimal but structurally complete paper, checked in so the end-to-end
+% conversion test runs everywhere — including CI, where the full external
+% fixture is unavailable. Each construct below corresponds to a repair rule
+% that has been observed to misfire at some point:
+%
+%   * a two-level header with \multirow / \multicolumn  -> tables rule
+%   * a table caption forced inside a figure float       -> captions rule
+%   * a wrapfigure caption pandoc drops                  -> captions rule
+%   * a reference to each float kind                     -> refs rule
+%   * an appendix with lettered sections                 -> headings rule
+%   * an abstract in a custom environment                -> structure rule
+%   * a display equation and an align block              -> math rule
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage{wrapfig}
+
+\newcommand{\metricpm}[2]{$#1 \pm #2$}
+\newcommand{\metricbest}[1]{\textbf{#1}}
+
+\title{A Tiny Paper for the \\ Converter}
+\author[1]{Ada Lovelace\thanks{Equal contribution.}}
+\author[2]{Alan Turing}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We test a converter on \textbf{bold} and \emph{emphasised} text with an
+equation $E = mc^2$ inline.
+\end{abstract}
+
+\section{Introduction}\label{sec:intro}
+See Section~\ref{sec:method}, Table~\ref{tab:main}, Figure~\ref{fig:one} and
+Equation~\ref{eq:first}. Also \citet{example2026}.
+
+\begin{equation}\label{eq:first}
+E = mc^2
+\end{equation}
+
+\begin{align}\label{eq:second}
+a &= b, \\
+c &= d.
+\end{align}
+
+\section{Method}\label{sec:method}
+The main comparison is in Table~\ref{tab:main}.
+
+\begin{table}[t]
+\caption{\textbf{Main results.} Scores are mean $\pm$ standard deviation.}
+\label{tab:main}
+\centering
+\begin{tabular}{lcc}
+\toprule
+\multirow{2}{*}{\textbf{Method}} & \multicolumn{2}{c}{\textbf{Benchmark}} \\
+\cmidrule(lr){2-3}
+ & Success & Rounds \\
+\midrule
+Baseline & \metricpm{20.1}{2.1} & 17.7 \\
+\metricbest{Ours} & \metricbest{\metricpm{24.2}{1.5}} & 18.0 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\captionsetup{type=table}
+\caption{\textbf{Forced table caption.} Numbered by the table counter.}
+\label{tab:forced}
+\centering
+\begin{tabular}{lc}
+\toprule
+Item & Value \\
+\midrule
+a & 1 \\
+\bottomrule
+\end{tabular}
+\end{figure}
+
+\begin{wrapfigure}{r}{0.4\linewidth}
+\caption{A wrapfigure caption pandoc drops.}
+\label{fig:one}
+\end{wrapfigure}
+
+Special symbols: $\alpha$, $\beta$, $\mathcal{L}$, and a percentage 42\%.
+
+\appendix
+\section{Proofs}\label{app:proofs}
+The full derivation follows.
+
+\subsection{A lemma}\label{app:lemma}
+Statement and proof.
+
+\bibliography{refs}
+
+\end{document}
