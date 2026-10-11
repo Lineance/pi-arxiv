@@ -17,6 +17,7 @@ import { LIB_VERSION, resolveConfig } from "./cfg.ts";
 import { registerArxivDiffTool } from "./compare/tool.ts";
 import { convertSourceDir, summarizeStats, summarizeWarnings } from "./convert/convert.ts";
 import { type CorpusBadge, formatReport, indexPapers, issueBadge } from "./corpus/index-papers.ts";
+import { registerPaperSearchTool } from "./paper/search.ts";
 import { registerPaperSectionTool } from "./paper/tool.ts";
 import type { ArxivMeta, ConvertResult, ConvertWarning, ExecLike } from "./types.ts";
 import { writeFileQueued } from "./util/fsx.ts";
@@ -391,6 +392,9 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 
 	// ------------------------------------------------------------ paper_section
 	registerPaperSectionTool(pi);
+
+	// ------------------------------------------------------------ paper_search
+	registerPaperSearchTool(pi);
 
 	// ------------------------------------------------------------ toolchain
 	pi.registerTool(

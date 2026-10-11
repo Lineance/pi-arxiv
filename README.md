@@ -71,6 +71,8 @@ arxiv_pull  { query: "https://arxiv.org/abs/2609.35319", figures: false }
 arxiv_pull  { query: "Outcome-Guided On-Policy Distillation..." }   # by title
 arxiv_lookup    { query: "2609.35319" }                   # metadata only, no download
 arxiv_diff      { id: "2609.35319", from: "v1", to: "v2" } # compare revisions, including table values
+paper_search    { query: "retrieval augmented generation" }    # search the local paper library
+paper_section  { id: "2609.35319", section: "3.2" }           # read a matching section
 papers_index    {}                                        # what is on disk, what is missing
 paper_markdown  { sourceDir: "./my-paper" }               # any local LaTeX directory
 paper_markdown  { sourceDir: "./my-paper", force: true }   # ignore the conversion cache
@@ -140,6 +142,7 @@ Commits) hooks.
 | `index-papers` | corpus classification: missing artifacts, corrupt manifest, staleness, legacy layout |
 | `tools` | config precedence and every tool, through a faked `pi` |
 | `compare` / `lines` | version file, LaTeX table-cell and bounded unified-diff behavior |
+| `paper-search` | local abstract/full-text search, ranking, section and line locations |
 | `extension` | the `/arxiv` command end to end |
 | `integration` | pi's own extension loader: tools, command and flags register cleanly |
 | `fixture` | conversion invariants, against a checked-in mini paper plus an optional full-size one |
@@ -160,8 +163,9 @@ optional fixture exists.
 extensions/
 ├── index.ts                 # extension factory: tools, command, flags
 ├── cfg.ts                   # settings/flags → ArxivConfig
-├── tools.ts                 # model-facing tools, including arxiv_diff
+├── tools.ts                 # model-facing tools, including arxiv_diff and paper_search
 ├── compare/                 # bounded version diffs and table-cell comparisons
+├── paper/                   # section extraction and local paper search
 ├── arxiv/api.ts             # Atom API: lookup by id, search by title
 ├── arxiv/pull.ts            # download + manifest
 ├── corpus/index-papers.ts   # corpus inventory and health report

@@ -151,28 +151,35 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the seven tools", () => {
+	it("registers the eight tools", () => {
 		const { tools } = loadTools();
 		expect([...tools.keys()].sort()).toEqual([
 			"arxiv_diff",
 			"arxiv_lookup",
 			"arxiv_pull",
 			"paper_markdown",
+			"paper_search",
 			"paper_section",
 			"paper_toolchain",
 			"papers_index",
 		]);
 	});
 
-	it.each(["arxiv_diff", "arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_section", "paper_toolchain", "papers_index"])(
-		"%s is model-usable",
-		(name) => {
-			const definition = loadTools().tools.get(name);
-			expect(definition?.description.length).toBeGreaterThan(40);
-			expect(definition?.parameters).toBeDefined();
-			expect(definition?.annotations).toBeDefined();
-		},
-	);
+	it.each([
+		"arxiv_diff",
+		"arxiv_lookup",
+		"arxiv_pull",
+		"paper_markdown",
+		"paper_search",
+		"paper_section",
+		"paper_toolchain",
+		"papers_index",
+	])("%s is model-usable", (name) => {
+		const definition = loadTools().tools.get(name);
+		expect(definition?.description.length).toBeGreaterThan(40);
+		expect(definition?.parameters).toBeDefined();
+		expect(definition?.annotations).toBeDefined();
+	});
 });
 
 describe("flag registration", () => {
@@ -231,6 +238,27 @@ describe("papers_index tool", () => {
 		expect(structured.broken).toBe(1);
 		expect(structured.entries.find((entry) => entry.id === "2609.00001")?.status).toBe("ok");
 		expect(structured.entries.find((entry) => entry.id === "2609.00002")?.status).toBe("error");
+	});
+});
+
+describe("paper_search tool", () => {
+	it("returns local hits with section and line locations", async () => {
+		const papersDir = join(root, "papers");
+		const sourceDir = join(papersDir, "2609.00003", "source");
+		await mkdir(sourceDir, { recursive: true });
+		await writeFile(join(sourceDir, "paper.md"), "# 3 Results\n\nThe retrieval system improves recall.\n");
+		await writeFile(
+			join(papersDir, "2609.00003", "manifest.json"),
+			JSON.stringify({ id: "2609.00003", title: "Retrieval Results", version: "v3" }),
+		);
+		const tools = loadTools({ settings: { arxiv: { papersDir } } }).tools;
+
+		const result = await callTool(tools, "paper_search", { query: "retrieval system" }, root);
+		const structured = result.structuredContent as { count: number; hits: Array<{ id: string; section: string; lineStart: number }> };
+
+		expect(structured.count).toBe(1);
+		expect(structured.hits[0]).toMatchObject({ id: "2609.00003", section: "3 Results", lineStart: 3 });
+		expect(result.content[0]?.text).toContain("recall");
 	});
 });
 
