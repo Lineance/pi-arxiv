@@ -14,6 +14,7 @@ import { Type } from "typebox";
 import { lookupById, parseArxivId, searchByTitle } from "./arxiv/api.ts";
 import { pull } from "./arxiv/pull.ts";
 import { LIB_VERSION, resolveConfig } from "./cfg.ts";
+import { registerArxivDiffTool } from "./compare/tool.ts";
 import { convertSourceDir, summarizeStats, summarizeWarnings } from "./convert/convert.ts";
 import { type CorpusBadge, formatReport, indexPapers, issueBadge } from "./corpus/index-papers.ts";
 import { registerPaperSectionTool } from "./paper/tool.ts";
@@ -384,6 +385,9 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			},
 		}),
 	);
+
+	// ------------------------------------------------------------ arxiv_diff
+	registerArxivDiffTool(pi, exec);
 
 	// ------------------------------------------------------------ paper_section
 	registerPaperSectionTool(pi);

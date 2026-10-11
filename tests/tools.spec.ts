@@ -151,9 +151,10 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the six tools", () => {
+	it("registers the seven tools", () => {
 		const { tools } = loadTools();
 		expect([...tools.keys()].sort()).toEqual([
+			"arxiv_diff",
 			"arxiv_lookup",
 			"arxiv_pull",
 			"paper_markdown",
@@ -163,7 +164,7 @@ describe("tool registration", () => {
 		]);
 	});
 
-	it.each(["arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_section", "paper_toolchain", "papers_index"])(
+	it.each(["arxiv_diff", "arxiv_lookup", "arxiv_pull", "paper_markdown", "paper_section", "paper_toolchain", "papers_index"])(
 		"%s is model-usable",
 		(name) => {
 			const definition = loadTools().tools.get(name);
