@@ -136,6 +136,33 @@ describe("part selection", () => {
 });
 
 describe("failure handling", () => {
+	it("propagates cancellation instead of writing a success manifest", async () => {
+		const controller = new AbortController();
+		const fetchImpl: typeof fetch = async (input) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if (url.includes("/e-print/")) {
+				controller.abort();
+				throw new Error("request aborted");
+			}
+			return new Response(new Uint8Array(PDF_BYTES), { status: 200 });
+		};
+
+		await expect(pull(META, { destDir: dir, signal: controller.signal, fetchImpl })).rejects.toMatchObject({ name: "AbortError" });
+		expect(existsSync(join(dir, "2609.35319.pdf"))).toBe(true);
+		expect(existsSync(join(dir, "abs.md"))).toBe(false);
+		expect(existsSync(join(dir, "manifest.json"))).toBe(false);
+	});
+
+	it("does not create the destination when already aborted", async () => {
+		const controller = new AbortController();
+		controller.abort();
+
+		await expect(pull(META, { destDir: join(dir, "cancelled"), signal: controller.signal })).rejects.toMatchObject({
+			name: "AbortError",
+		});
+		expect(existsSync(join(dir, "cancelled"))).toBe(false);
+	});
+
 	it("reports an HTTP failure as a warning instead of throwing", async () => {
 		const stub = stubFetch({});
 

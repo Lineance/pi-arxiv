@@ -170,6 +170,7 @@ function sourceUrl(meta: ArxivMeta, version: string): string {
 
 /** Fetch the requested parts into `destDir` and (re)write `manifest.json`. */
 export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullResult> {
+	options.signal?.throwIfAborted();
 	const parts = options.parts ?? ["pdf", "source", "abs"];
 	const version = options.version && options.version !== "latest" ? options.version : (meta.version ?? "");
 	const { destDir } = options;
@@ -182,6 +183,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	const reused: string[] = [];
 
 	await ensureDir(destDir);
+	options.signal?.throwIfAborted();
 
 	const manifest: Manifest = (await readManifest(manifestPath)) ?? {
 		id: meta.id,
@@ -195,6 +197,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 		outputs: {},
 		warnings: [],
 	};
+	options.signal?.throwIfAborted();
 	manifest.id = meta.id;
 	manifest.version = version || "latest";
 	manifest.title = meta.title;
@@ -215,6 +218,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	};
 
 	if (parts.includes("pdf")) {
+		options.signal?.throwIfAborted();
 		const pdfPath = join(destDir, `${meta.id}.pdf`);
 		const present = (await sizeOf(pdfPath)) > 0;
 		if (present && !options.force) {
@@ -225,6 +229,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 		result.pdfPath = pdfPath;
 		manifest.sha256.pdf = await sha256File(pdfPath);
 		manifest.outputs.pdf = `${meta.id}.pdf`;
+		options.signal?.throwIfAborted();
 	}
 
 	if (parts.includes("source")) {
@@ -235,8 +240,11 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 			} else {
 				await writeFileQueued(archive, await download(sourceUrl(meta, version), downloadOptions));
 			}
+			options.signal?.throwIfAborted();
 			const buffer = await readFile(archive);
+			options.signal?.throwIfAborted();
 			const saved = await saveSource(buffer, sourceDir);
+			options.signal?.throwIfAborted();
 			if (saved.note) warnings.push({ rule: "pull", level: "info", message: saved.note });
 			if (saved.skipped.length > 0) {
 				warnings.push({
@@ -252,11 +260,13 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 			manifest.outputs.source = "source/";
 			manifest.outputs.sourceFiles = saved.files.length;
 		} catch (error) {
+			options.signal?.throwIfAborted();
 			warnings.push({ rule: "pull", level: "warn", message: `source download failed: ${(error as Error).message}` });
 		}
 	}
 
 	if (parts.includes("abs")) {
+		options.signal?.throwIfAborted();
 		const absPath = join(destDir, "abs.md");
 		const body = renderAbsMarkdown(meta);
 		if (options.force || sha256Text(body) !== manifest.sha256.abs) {
@@ -270,6 +280,8 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	}
 
 	manifest.warnings = warnings;
+	options.signal?.throwIfAborted();
 	await writeFileQueued(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+	options.signal?.throwIfAborted();
 	return result;
 }
