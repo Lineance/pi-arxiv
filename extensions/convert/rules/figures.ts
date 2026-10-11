@@ -6,6 +6,8 @@
  * inside a figure float (the `\captionsetup{type=table}` idiom).
  */
 
+import { randomUUID } from "node:crypto";
+import { rename, rm } from "node:fs/promises";
 import { basename, extname, isAbsolute, join, relative } from "node:path";
 import { ensureDir, exists } from "../../util/fsx.ts";
 import { probeTool } from "../../util/toolchain.ts";
@@ -107,18 +109,9 @@ async function rasterize(state: ConvertState, images: string[]): Promise<Map<str
 	await ensureDir(outDir);
 	let rendered = 0;
 	for (const image of pending) {
-		const target = join(outDir, `${basename(image.texPath, extname(image.texPath))}.png`);
-		if (!(await exists(target))) {
-			const result = await state.io.exec(
-				"pdftoppm",
-				["-png", "-r", String(state.figureDpi), "-singlefile", image.full, target.replace(/\.png$/, "")],
-				{ cwd: state.workDir, signal: state.signal, timeout: 120_000 },
-			);
-			if (result.code !== 0) {
-				warn(state, "figures", `pdftoppm failed for ${image.texPath}: ${result.stderr.trim().split("\n")[0] ?? "unknown error"}`, "warn");
-				continue;
-			}
-		}
+		state.signal?.throwIfAborted();
+		const target = await renderImage(state, image, outDir);
+		if (!target) continue;
 		rendered++;
 		const relativeTarget = relative(state.outDir, target).split("\\").join("/");
 		map.set(`](${image.texPath})`, `](${relativeTarget})`);
@@ -127,6 +120,39 @@ async function rasterize(state: ConvertState, images: string[]): Promise<Map<str
 	if (rendered > 0)
 		warn(state, "figures", `${rendered} figure PDF(s) rendered to ${relative(state.outDir, outDir).split("\\").join("/")}/`);
 	return map;
+}
+
+async function renderImage(state: ConvertState, image: ImageRef, outDir: string): Promise<string | undefined> {
+	const target = join(outDir, `${basename(image.texPath, extname(image.texPath))}.png`);
+	if (await exists(target)) return target;
+
+	const tempPrefix = join(outDir, `.${basename(target, ".png")}.${randomUUID()}`);
+	const tempTarget = `${tempPrefix}.png`;
+	try {
+		const result = await state.io.exec("pdftoppm", ["-png", "-r", String(state.figureDpi), "-singlefile", image.full, tempPrefix], {
+			cwd: state.workDir,
+			signal: state.signal,
+			timeout: 120_000,
+		});
+		state.signal?.throwIfAborted();
+		if (result.code !== 0 || result.killed) {
+			const reason = result.killed ? "process was terminated" : (result.stderr.trim().split("\n")[0] ?? "unknown error");
+			warn(state, "figures", `pdftoppm failed for ${image.texPath}: ${reason}`, "warn");
+			return undefined;
+		}
+		if (!(await exists(tempTarget))) {
+			warn(state, "figures", `pdftoppm produced no output for ${image.texPath}`, "warn");
+			return undefined;
+		}
+		try {
+			await rename(tempTarget, target);
+		} catch (error) {
+			if (!(await exists(target))) throw error;
+		}
+		return target;
+	} finally {
+		await rm(tempTarget, { force: true });
+	}
 }
 
 export const figuresRule: Rule = {

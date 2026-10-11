@@ -19,7 +19,7 @@ export interface ConvertState {
 	renderFigures: boolean;
 	figureDpi: number;
 	tableMode: "gfm" | "html";
-	signal?: AbortSignal;
+	signal?: AbortSignal | undefined;
 	warnings: ConvertWarning[];
 	stats: ConvertStats;
 	figureFiles: string[];

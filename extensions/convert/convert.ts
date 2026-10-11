@@ -4,7 +4,7 @@
  */
 
 import { basename, dirname, join, relative, resolve } from "node:path";
-import type { ConvertOptions, ConvertResult, ConvertStats, ConvertWarning, ExecLike, ExecOptionsLike, ExecResultLike } from "../types.ts";
+import type { ConvertIO, ConvertOptions, ConvertResult, ConvertStats, ConvertWarning, ExecOptionsLike, ExecResultLike } from "../types.ts";
 import { exists, writeFileQueued } from "../util/fsx.ts";
 import { LIB_VERSION } from "../version.ts";
 import { buildEntry, cachePathFor, digestSources, findValidCache, outputExclusions, toolchainVersions, writeCache } from "./cache.ts";
@@ -26,10 +26,8 @@ export function emptyStats(): ConvertStats {
 	};
 }
 
-export async function convertSourceDir(
-	options: ConvertOptions,
-	io: { exec: ExecLike; log?: (message: string) => void },
-): Promise<ConvertResult> {
+export async function convertSourceDir(options: ConvertOptions, io: ConvertIO): Promise<ConvertResult> {
+	io.signal?.throwIfAborted();
 	if (typeof options.workDir !== "string" || options.workDir.trim() === "") {
 		return {
 			ok: false,
@@ -54,7 +52,9 @@ export async function convertSourceDir(
 	let analysis: TexAnalysis;
 	try {
 		analysis = await analyzeSourceDir(workDir, options.mainTex);
+		io.signal?.throwIfAborted();
 	} catch (error) {
+		io.signal?.throwIfAborted();
 		return { ok: false, figures: [], stats, warnings: [{ rule: "convert", level: "error", message: (error as Error).message }] };
 	}
 
@@ -65,6 +65,7 @@ export async function convertSourceDir(
 	if (cacheEnabled) {
 		const reuse = await findValidCache(outFile, await currentInputs(workDir, outFile, options, io));
 		if (reuse) {
+			io.signal?.throwIfAborted();
 			return {
 				ok: true,
 				markdownPath: reuse.markdownPath,
@@ -80,6 +81,7 @@ export async function convertSourceDir(
 		workDir,
 		mainTexFile: relative(workDir, analysis.mainFile).split("\\").join("/"),
 		bibNames: analysis.bibFiles,
+		signal: io.signal,
 	});
 	warnings.push(...pandoc.warnings);
 	if (!pandoc.ok) return { ok: false, figures: [], stats, warnings };
@@ -97,14 +99,17 @@ export async function convertSourceDir(
 		warnings,
 		stats,
 		figureFiles: [],
+		signal: io.signal,
 	};
 
 	for (const rule of rules) {
 		io.log?.(`rule: ${rule.id} — ${rule.description}`);
 		await rule.run(state);
+		io.signal?.throwIfAborted();
 	}
 	lintMarkdown(state);
 
+	io.signal?.throwIfAborted();
 	await writeFileQueued(outFile, state.markdown);
 
 	let rawMarkdownPath: string | undefined;
@@ -113,10 +118,13 @@ export async function convertSourceDir(
 		await writeFileQueued(rawMarkdownPath, pandoc.markdown);
 	}
 
+	io.signal?.throwIfAborted();
 	// Record the inputs only after a successful write, so an interrupted run
 	// cannot leave a cache entry describing a file that was never produced.
 	const inputs = await currentInputs(workDir, outFile, options, io);
+	io.signal?.throwIfAborted();
 	await writeCache(cachePathFor(outFile), buildEntry(inputs, { markdownPath: outFile, stats, figures: state.figureFiles, warnings }));
+	io.signal?.throwIfAborted();
 
 	return {
 		ok: true,
@@ -133,11 +141,11 @@ async function currentInputs(
 	workDir: string,
 	outFile: string,
 	options: ConvertOptions,
-	io: { exec: ExecLike },
+	io: Pick<ConvertIO, "exec" | "signal">,
 ): Promise<Parameters<typeof buildEntry>[0]> {
 	return {
 		sourceDigest: await digestSources(workDir, outputExclusions(outFile, workDir)),
-		toolchain: await toolchainVersions(io.exec),
+		toolchain: await toolchainVersions(io.exec, io.signal),
 		options: {
 			figures: options.figures ?? true,
 			figureDpi: options.figureDpi ?? 150,
@@ -169,20 +177,34 @@ export function summarizeStats(stats: ConvertStats): string {
 /** Convenience ExecLike over node:child_process for standalone use. */
 export async function childProcessExec(command: string, args: string[], options?: ExecOptionsLike): Promise<ExecResultLike> {
 	const { spawn } = await import("node:child_process");
-	return await new Promise((ok) => {
+	return await new Promise((resolve, reject) => {
 		const child = spawn(command, args, { cwd: options?.cwd, signal: options?.signal, shell: false });
 		let stdout = "";
 		let stderr = "";
-		const timer = options?.timeout ? setTimeout(() => child.kill("SIGKILL"), options.timeout) : undefined;
+		let spawnError: Error | undefined;
+		let timedOut = false;
+		const timer = options?.timeout
+			? setTimeout(() => {
+					timedOut = true;
+					child.kill("SIGKILL");
+				}, options.timeout)
+			: undefined;
 		child.stdout?.on("data", (chunk) => (stdout += String(chunk)));
 		child.stderr?.on("data", (chunk) => (stderr += String(chunk)));
 		child.on("error", (error) => {
-			if (timer) clearTimeout(timer);
-			ok({ stdout, stderr: stderr || error.message, code: 127, killed: false });
+			spawnError = error;
 		});
-		child.on("close", (code) => {
+		child.on("close", (code, exitSignal) => {
 			if (timer) clearTimeout(timer);
-			ok({ stdout, stderr, code: code ?? 0, killed: false });
+			if (options?.signal?.aborted) {
+				reject(options.signal.reason);
+				return;
+			}
+			if (spawnError) {
+				resolve({ stdout, stderr: stderr || spawnError.message, code: 127, killed: false });
+				return;
+			}
+			resolve({ stdout, stderr, code: timedOut ? 124 : (code ?? 1), killed: timedOut || exitSignal !== null });
 		});
 	});
 }

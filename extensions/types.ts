@@ -105,4 +105,6 @@ export interface ConvertResult {
 export interface ConvertIO {
 	exec: ExecLike;
 	log?: ((message: string) => void) | undefined;
+	/** Cancels the external tools and propagates into the rule pipeline. */
+	signal?: AbortSignal | undefined;
 }

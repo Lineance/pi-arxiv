@@ -89,6 +89,7 @@ export default function piArxiv(pi: ExtensionAPI) {
 					version: args.version,
 					force: args.force,
 					timeoutMs: config.timeoutMs,
+					signal: ctx.signal,
 					libVersion: LIB_VERSION,
 				});
 
@@ -108,7 +109,7 @@ export default function piArxiv(pi: ExtensionAPI) {
 							// A forced pull re-downloads, so its conversion must not be reused.
 							force: args.force,
 						},
-						{ exec },
+						{ exec, signal: ctx.signal },
 					);
 					markdownPath = converted.markdownPath;
 					statsLine = summarizeStats(converted.stats);
@@ -135,6 +136,7 @@ export default function piArxiv(pi: ExtensionAPI) {
 					});
 				}
 			} catch (error) {
+				if (ctx.signal?.aborted) return;
 				ctx.ui.notify(`arxiv failed: ${(error as Error).message}`, "error");
 			}
 		},

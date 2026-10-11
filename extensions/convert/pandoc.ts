@@ -12,7 +12,7 @@ export interface PandocOptions {
 	workDir: string;
 	mainTexFile: string;
 	bibNames: string[];
-	signal?: AbortSignal;
+	signal?: AbortSignal | undefined;
 }
 
 export interface PandocResult {
@@ -35,8 +35,10 @@ export async function resolveBibliography(workDir: string, bibNames: string[]): 
 }
 
 export async function runPandoc(io: ConvertIO, options: PandocOptions): Promise<PandocResult> {
+	options.signal?.throwIfAborted();
 	const warnings: ConvertWarning[] = [];
 	const status = await probeTool(io.exec, { name: "pandoc", args: ["--version"], hint: "required for LaTeX → Markdown" }, options.signal);
+	options.signal?.throwIfAborted();
 	if (!status.available) {
 		return {
 			ok: false,
@@ -65,11 +67,14 @@ export async function runPandoc(io: ConvertIO, options: PandocOptions): Promise<
 	}
 
 	const result = await io.exec("pandoc", args, { cwd: options.workDir, signal: options.signal, timeout: 300_000 });
-	if (result.code !== 0) {
+	options.signal?.throwIfAborted();
+	if (result.code !== 0 || result.killed) {
 		warnings.push({
 			rule: "pandoc",
 			level: "error",
-			message: `pandoc exited with ${result.code}: ${(result.stderr || result.stdout).trim().split("\n").slice(0, 3).join(" ")}`,
+			message: result.killed
+				? `pandoc was terminated${result.code === 124 ? " after timing out" : ""}`
+				: `pandoc exited with ${result.code}: ${(result.stderr || result.stdout).trim().split("\n").slice(0, 3).join(" ")}`,
 		});
 	}
 	for (const line of result.stderr.split("\n")) {
@@ -78,5 +83,5 @@ export async function runPandoc(io: ConvertIO, options: PandocOptions): Promise<
 		warnings.push({ rule: "pandoc", level: "info", message: line.replace(/^\[WARNING\]\s*/, "").trim() });
 	}
 
-	return { ok: result.code === 0, markdown: result.stdout, command: `pandoc ${args.join(" ")}`, warnings };
+	return { ok: result.code === 0 && !result.killed, markdown: result.stdout, command: `pandoc ${args.join(" ")}`, warnings };
 }

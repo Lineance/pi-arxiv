@@ -54,9 +54,10 @@ const PROBES: Record<keyof Toolchain, Probe> = {
 	},
 };
 
-const cache = new Map<string, ToolStatus>();
+const cache = new Map<keyof Toolchain, ToolStatus>();
 
 export async function probeTool(exec: ExecLike, probe: Probe, signal?: AbortSignal): Promise<ToolStatus> {
+	signal?.throwIfAborted();
 	const cached = cache.get(probe.name);
 	if (cached) return cached;
 
@@ -71,8 +72,10 @@ export async function probeTool(exec: ExecLike, probe: Probe, signal?: AbortSign
 			status = { name: probe.name, available: true, version, hint: probe.hint };
 		}
 	} catch {
+		signal?.throwIfAborted();
 		/* not installed: leave the status as unavailable */
 	}
+	signal?.throwIfAborted();
 	cache.set(probe.name, status);
 	return status;
 }

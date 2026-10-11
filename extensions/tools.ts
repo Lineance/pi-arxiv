@@ -202,7 +202,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 							// A forced pull re-downloads, so its conversion must not be reused.
 							force: params.force,
 						},
-						{ exec, log: (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined }) },
+						{ exec, signal, log: (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined }) },
 					);
 					pulled.manifest.outputs.markdown = converted.markdownPath;
 					pulled.manifest.outputs.conversion = converted.stats;
@@ -279,7 +279,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 				}),
 				warnings: Type.Array(WarningSchema),
 			}),
-			async execute(_id, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+			async execute(_id, params, signal, _onUpdate, ctx: ExtensionToolContext) {
 				const sourceDir = resolve(ctx.cwd, params.sourceDir);
 				const config = resolveConfig(pi, ctx.cwd, { figures: params.figures });
 				const result = await convertSourceDir(
@@ -293,7 +293,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 						keepIntermediate: params.keepIntermediate,
 						force: params.force,
 					},
-					{ exec },
+					{ exec, signal },
 				);
 				const text = [
 					result.ok ? `markdown: ${result.markdownPath}` : "conversion failed",
