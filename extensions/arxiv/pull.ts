@@ -168,6 +168,18 @@ function sourceUrl(meta: ArxivMeta, version: string): string {
 	return `https://arxiv.org/e-print/${meta.id}${version}`;
 }
 
+async function matchesManifestArtifact(
+	path: string,
+	previousUrl: string | undefined,
+	expectedUrl: string,
+	previousHash: string | undefined,
+	force: boolean,
+): Promise<boolean> {
+	if (force || previousUrl !== expectedUrl || !previousHash || !/^[a-f0-9]{64}$/i.test(previousHash)) return false;
+	if ((await sizeOf(path)) <= 0) return false;
+	return (await sha256File(path)) === previousHash.toLowerCase();
+}
+
 /** Fetch the requested parts into `destDir` and (re)write `manifest.json`. */
 export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullResult> {
 	options.signal?.throwIfAborted();
@@ -185,7 +197,9 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	await ensureDir(destDir);
 	options.signal?.throwIfAborted();
 
-	const manifest: Manifest = (await readManifest(manifestPath)) ?? {
+	const previousManifest = await readManifest(manifestPath);
+	options.signal?.throwIfAborted();
+	const manifest: Manifest = previousManifest ?? {
 		id: meta.id,
 		version: version || "latest",
 		title: meta.title,
@@ -203,6 +217,15 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	manifest.title = meta.title;
 	manifest.authors = meta.authors;
 	manifest.fetchedAt = new Date().toISOString();
+	manifest.urls = {
+		abs: previousManifest?.urls?.abs ?? meta.absUrl,
+		pdf: previousManifest?.urls?.pdf ?? meta.pdfUrl,
+		source: previousManifest?.urls?.source ?? sourceUrl(meta, version),
+	};
+	manifest.sha256 = previousManifest?.sha256 ?? {};
+	manifest.toolchain = previousManifest?.toolchain ?? {};
+	manifest.outputs = previousManifest?.outputs ?? {};
+	manifest.warnings = previousManifest?.warnings ?? [];
 	if (options.libVersion) manifest.toolchain["pi-arxiv"] = options.libVersion;
 
 	const result: PullResult = {
@@ -220,25 +243,42 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	if (parts.includes("pdf")) {
 		options.signal?.throwIfAborted();
 		const pdfPath = join(destDir, `${meta.id}.pdf`);
-		const present = (await sizeOf(pdfPath)) > 0;
-		if (present && !options.force) {
+		const pdfUrl = meta.pdfUrl;
+		const reusable = await matchesManifestArtifact(
+			pdfPath,
+			previousManifest?.urls?.pdf,
+			pdfUrl,
+			previousManifest?.sha256?.pdf,
+			options.force ?? false,
+		);
+		if (reusable) {
 			reused.push(pdfPath);
 		} else {
-			await writeFileQueued(pdfPath, await download(meta.pdfUrl, downloadOptions));
+			await writeFileQueued(pdfPath, await download(pdfUrl, downloadOptions));
 		}
+		options.signal?.throwIfAborted();
 		result.pdfPath = pdfPath;
 		manifest.sha256.pdf = await sha256File(pdfPath);
+		manifest.urls.pdf = pdfUrl;
 		manifest.outputs.pdf = `${meta.id}.pdf`;
 		options.signal?.throwIfAborted();
 	}
 
 	if (parts.includes("source")) {
 		const archive = join(destDir, `${meta.id}-src.tar.gz`);
+		const archiveUrl = sourceUrl(meta, version);
 		try {
-			if ((await sizeOf(archive)) > 0 && !options.force) {
+			const reusable = await matchesManifestArtifact(
+				archive,
+				previousManifest?.urls?.source,
+				archiveUrl,
+				previousManifest?.sha256?.source,
+				options.force ?? false,
+			);
+			if (reusable) {
 				reused.push(archive);
 			} else {
-				await writeFileQueued(archive, await download(sourceUrl(meta, version), downloadOptions));
+				await writeFileQueued(archive, await download(archiveUrl, downloadOptions));
 			}
 			options.signal?.throwIfAborted();
 			const buffer = await readFile(archive);
@@ -257,6 +297,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 			result.skippedTraversal = saved.skipped;
 			result.sourceDir = sourceDir;
 			manifest.sha256.source = await sha256File(archive);
+			manifest.urls.source = archiveUrl;
 			manifest.outputs.source = "source/";
 			manifest.outputs.sourceFiles = saved.files.length;
 		} catch (error) {

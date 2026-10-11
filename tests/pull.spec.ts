@@ -4,7 +4,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -110,6 +110,37 @@ describe("repeat pull", () => {
 		expect(again.reused.some((path) => path.endsWith(".pdf"))).toBe(true);
 		expect(again.reused.some((path) => path.endsWith(".tar.gz"))).toBe(true);
 		expect(again.manifest.sha256.pdf).toBe(initial.manifest.sha256.pdf);
+	});
+
+	it("re-downloads files whose contents no longer match their manifest hashes", async () => {
+		const first = stubFetch({ "/pdf/": PDF_BYTES, "/e-print/": SOURCE_ARCHIVE });
+		const initial = await pull(META, { destDir: dir, version: "v1", fetchImpl: first.fetch });
+		const pdfPath = join(dir, "2609.35319.pdf");
+		const archivePath = join(dir, "2609.35319-src.tar.gz");
+		await writeFile(pdfPath, "corrupt pdf");
+		await writeFile(archivePath, "corrupt source");
+
+		const repair = stubFetch({ "/pdf/": PDF_BYTES, "/e-print/": SOURCE_ARCHIVE });
+		const result = await pull(META, { destDir: dir, version: "v1", fetchImpl: repair.fetch });
+
+		expect(repair.calls).toHaveLength(2);
+		expect(await readFile(pdfPath)).toEqual(PDF_BYTES);
+		expect(await readFile(archivePath)).toEqual(SOURCE_ARCHIVE);
+		expect(result.manifest.sha256.pdf).toBe(initial.manifest.sha256.pdf);
+		expect(result.manifest.sha256.source).toBe(initial.manifest.sha256.source);
+	});
+
+	it("does not reuse artifacts whose recorded URLs belong to another version", async () => {
+		const first = stubFetch({ "/pdf/": PDF_BYTES, "/e-print/": SOURCE_ARCHIVE });
+		await pull(META, { destDir: dir, version: "v1", fetchImpl: first.fetch });
+		const nextMeta = { ...META, version: "v2", pdfUrl: META.pdfUrl.replace("v1", "v2") };
+		const second = stubFetch({ "/pdf/": PDF_BYTES, "/e-print/": SOURCE_ARCHIVE });
+
+		const result = await pull(nextMeta, { destDir: dir, version: "v2", fetchImpl: second.fetch });
+
+		expect(second.calls).toHaveLength(2);
+		expect(result.manifest.urls.pdf).toBe(nextMeta.pdfUrl);
+		expect(result.manifest.urls.source).toContain("v2");
 	});
 
 	it("re-downloads when forced", async () => {
