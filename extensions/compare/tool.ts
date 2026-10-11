@@ -30,6 +30,10 @@ const DEFAULT_DIFF_LINES = 200;
 
 const TableChangeSchema = Type.Object({
 	table: Type.Number(),
+	fromTable: Type.Optional(Type.Number()),
+	toTable: Type.Optional(Type.Number()),
+	alignment: Type.String(),
+	label: Type.Optional(Type.String()),
 	caption: Type.Optional(Type.String()),
 	changes: Type.Array(Type.String()),
 });
@@ -145,6 +149,10 @@ export function registerArxivDiffTool(pi: ExtensionAPI, exec: ExecLike): void {
 						filesChanged: diff.files.changed,
 						tables: diff.tables.map((delta) => ({
 							table: delta.index,
+							...(delta.fromIndex !== undefined ? { fromTable: delta.fromIndex } : {}),
+							...(delta.toIndex !== undefined ? { toTable: delta.toIndex } : {}),
+							alignment: delta.alignment,
+							...(delta.label ? { label: delta.label } : {}),
 							...((delta.toCaption ?? delta.fromCaption) ? { caption: delta.toCaption ?? delta.fromCaption ?? "" } : {}),
 							changes: delta.cells.map((cell) => `r${cell.row}c${cell.column}: ${cell.from || "(empty)"} → ${cell.to || "(empty)"}`),
 						})),

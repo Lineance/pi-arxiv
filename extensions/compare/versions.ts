@@ -31,9 +31,15 @@ export interface CellChange {
 	to: string;
 }
 
+export type TableAlignment = "label" | "caption" | "structure" | "unmatched";
+
 export interface TableDelta {
-	/** 1-based position in document order, i.e. the LaTeX table number. */
+	/** Displayed document order, preferring the newer version's table number. */
 	index: number;
+	fromIndex?: number | undefined;
+	toIndex?: number | undefined;
+	alignment: TableAlignment;
+	label?: string | undefined;
 	fromCaption?: string | undefined;
 	toCaption?: string | undefined;
 	captionChanged: boolean;
@@ -116,68 +122,142 @@ function normaliseCell(cell: string): string {
 }
 
 export function diffTables(fromTables: ParsedTable[], toTables: ParsedTable[]): TableDelta[] {
-	const deltas: TableDelta[] = [];
-	const count = Math.max(fromTables.length, toTables.length);
+	const pairs: Array<{ fromIndex?: number; toIndex?: number; alignment: TableAlignment }> = [];
+	const fromRemaining = new Set(fromTables.map((_table, index) => index));
+	const toRemaining = new Set(toTables.map((_table, index) => index));
 
-	for (let index = 0; index < count; index++) {
-		const from = fromTables[index];
-		const to = toTables[index];
-		const fromCaption = from?.caption;
-		const toCaption = to?.caption;
-		const fromShape = from ? `${from.columns}x${from.rows.length}` : "-";
-		const toShape = to ? `${to.columns}x${to.rows.length}` : "-";
+	const pairByKey = (keyFor: (table: ParsedTable) => string | undefined, alignment: Exclude<TableAlignment, "unmatched">) => {
+		const fromKeys = uniqueTableKeys(fromTables, fromRemaining, keyFor);
+		const toKeys = uniqueTableKeys(toTables, toRemaining, keyFor);
+		for (const [key, fromIndex] of fromKeys) {
+			const toIndex = toKeys.get(key);
+			if (toIndex === undefined) continue;
+			pairs.push({ fromIndex, toIndex, alignment });
+			fromRemaining.delete(fromIndex);
+			toRemaining.delete(toIndex);
+		}
+	};
 
-		const delta: TableDelta = {
-			index: index + 1,
-			fromCaption,
-			toCaption,
-			captionChanged: (fromCaption ?? "") !== (toCaption ?? ""),
-			shapeChanged: fromShape !== toShape,
-			fromShape,
-			toShape,
-			cells: [],
-			rowsAdded: Math.max(0, (to?.rows.length ?? 0) - (from?.rows.length ?? 0)),
-			rowsRemoved: Math.max(0, (from?.rows.length ?? 0) - (to?.rows.length ?? 0)),
-		};
+	pairByKey((table) => nonEmpty(table.label), "label");
+	pairByKey((table) => {
+		const caption = normalizeIdentity(table.caption ?? "");
+		return caption || undefined;
+	}, "caption");
+	pairByKey((table) => tableStructureKey(table), "structure");
 
-		// Cell-by-cell only makes sense while the tables still line up. Once the
-		// shape changes, positions no longer identify the same cell, and guessing
-		// would invent changes.
-		if (from && to && !delta.shapeChanged) {
-			for (let row = 0; row < from.rows.length; row++) {
-				const fromRow = from.rows[row] ?? [];
-				const toRow = to.rows[row] ?? [];
-				for (let column = 0; column < Math.max(fromRow.length, toRow.length); column++) {
-					const before = fromRow[column] ?? "";
-					const after = toRow[column] ?? "";
-					if (normaliseCell(before) !== normaliseCell(after)) {
-						delta.cells.push({ row: row + 1, column: column + 1, from: before, to: after });
-					}
-				}
+	for (const fromIndex of fromRemaining) pairs.push({ fromIndex, alignment: "unmatched" });
+	for (const toIndex of toRemaining) pairs.push({ toIndex, alignment: "unmatched" });
+
+	return pairs
+		.map(({ fromIndex, toIndex, alignment }) => makeTableDelta(fromTables, toTables, fromIndex, toIndex, alignment))
+		.filter(
+			(delta) =>
+				delta.alignment === "unmatched" ||
+				delta.captionChanged ||
+				delta.shapeChanged ||
+				delta.rowsAdded > 0 ||
+				delta.rowsRemoved > 0 ||
+				delta.cells.length > 0,
+		)
+		.sort((a, b) => a.index - b.index || (a.fromIndex ?? 0) - (b.fromIndex ?? 0));
+}
+
+function uniqueTableKeys(
+	tables: ParsedTable[],
+	remaining: Set<number>,
+	keyFor: (table: ParsedTable) => string | undefined,
+): Map<string, number> {
+	const indexes = new Map<string, number[]>();
+	for (const index of remaining) {
+		const table = tables[index];
+		const key = table ? keyFor(table) : undefined;
+		if (!key) continue;
+		indexes.set(key, [...(indexes.get(key) ?? []), index]);
+	}
+	return new Map([...indexes].filter(([, matches]) => matches.length === 1).map(([key, matches]) => [key, matches[0] as number]));
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+	const normalized = value?.trim();
+	return normalized || undefined;
+}
+
+function normalizeIdentity(value: string): string {
+	return value
+		.replace(/\\(?:textbf|emph|textit)\s*\{([^{}]*)\}/g, "$1")
+		.replace(/[{}*_`]/g, "")
+		.replace(/\s+/g, " ")
+		.trim()
+		.toLowerCase();
+}
+
+function tableStructureKey(table: ParsedTable): string | undefined {
+	const header = table.rows[0]?.map(normalizeIdentity).filter(Boolean).join("|");
+	return header ? `${table.columns}:${header}` : undefined;
+}
+
+function makeTableDelta(
+	fromTables: ParsedTable[],
+	toTables: ParsedTable[],
+	fromIndex: number | undefined,
+	toIndex: number | undefined,
+	alignment: TableAlignment,
+): TableDelta {
+	const from = fromIndex === undefined ? undefined : fromTables[fromIndex];
+	const to = toIndex === undefined ? undefined : toTables[toIndex];
+	const fromCaption = from?.caption;
+	const toCaption = to?.caption;
+	const fromShape = from ? `${from.columns}x${from.rows.length}` : "-";
+	const toShape = to ? `${to.columns}x${to.rows.length}` : "-";
+	const shapeChanged = Boolean(from && to && from.columns !== to.columns);
+	const cells: CellChange[] = [];
+
+	if (from && to && alignment !== "unmatched" && !shapeChanged) {
+		for (let row = 0; row < Math.min(from.rows.length, to.rows.length); row++) {
+			const fromRow = from.rows[row] ?? [];
+			const toRow = to.rows[row] ?? [];
+			for (let column = 0; column < Math.max(fromRow.length, toRow.length); column++) {
+				const before = fromRow[column] ?? "";
+				const after = toRow[column] ?? "";
+				if (normaliseCell(before) !== normaliseCell(after)) cells.push({ row: row + 1, column: column + 1, from: before, to: after });
 			}
 		}
-
-		// A table is reported only when something about it moved. Comparing the
-		// observable parts (shape, caption, cells) beats trusting a boolean chain.
-		const unchanged = Boolean(from) && Boolean(to) && !delta.captionChanged && !delta.shapeChanged && delta.cells.length === 0;
-		if (!unchanged) deltas.push(delta);
 	}
 
-	return deltas;
+	return {
+		index: (toIndex ?? fromIndex ?? 0) + 1,
+		...(fromIndex !== undefined ? { fromIndex: fromIndex + 1 } : {}),
+		...(toIndex !== undefined ? { toIndex: toIndex + 1 } : {}),
+		alignment,
+		...((from?.label ?? to?.label) ? { label: from?.label ?? to?.label } : {}),
+		fromCaption,
+		toCaption,
+		captionChanged: Boolean(from && to && (fromCaption ?? "") !== (toCaption ?? "")),
+		shapeChanged: shapeChanged || alignment === "unmatched",
+		fromShape,
+		toShape,
+		cells,
+		rowsAdded: from && to ? Math.max(0, to.rows.length - from.rows.length) : 0,
+		rowsRemoved: from && to ? Math.max(0, from.rows.length - to.rows.length) : 0,
+	};
 }
 
 /** One line per changed cell, the form a reader can scan. */
 export function formatTableDeltas(deltas: TableDelta[], limit = 40): string[] {
 	const out: string[] = [];
 	for (const delta of deltas) {
-		const caption = delta.toCaption ?? delta.fromCaption ?? `table ${delta.index}`;
-		const heading = `Table ${delta.index}: ${caption}`;
+		const caption = delta.toCaption ?? delta.fromCaption ?? delta.label ?? `table ${delta.index}`;
+		const moved = delta.fromIndex !== undefined && delta.toIndex !== undefined && delta.fromIndex !== delta.toIndex;
+		const tableNumber = `Table ${delta.toIndex ?? delta.fromIndex ?? delta.index}${moved ? ` (was ${delta.fromIndex})` : ""}`;
+		const heading = `${tableNumber}: ${caption}`;
 		const notes: string[] = [];
+		if (delta.alignment === "unmatched") notes.push("not aligned; cell comparison omitted");
+		else notes.push(`matched by ${delta.alignment}`);
 		if (delta.captionChanged && delta.fromCaption && delta.toCaption) notes.push("caption changed");
 		if (delta.shapeChanged) notes.push(`shape ${delta.fromShape} → ${delta.toShape}`);
 		if (delta.rowsAdded > 0) notes.push(`${delta.rowsAdded} row(s) added`);
 		if (delta.rowsRemoved > 0) notes.push(`${delta.rowsRemoved} row(s) removed`);
-		out.push(notes.length > 0 ? `${heading} (${notes.join(", ")})` : heading);
+		out.push(`${heading} (${notes.join(", ")})`);
 
 		for (const cell of delta.cells.slice(0, limit)) {
 			out.push(`  r${cell.row}c${cell.column}: ${cell.from || "(empty)"} → ${cell.to || "(empty)"}`);

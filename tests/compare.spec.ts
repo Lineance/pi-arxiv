@@ -8,12 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { compareFiles, compareVersions, diffTables, formatTableDeltas, summarizeComparison } from "../extensions/compare/versions.ts";
-import { type ParsedTable, parseTabularBody } from "../extensions/convert/latex.ts";
+import { analyzeSourceDir, type ParsedTable, parseTabularBody } from "../extensions/convert/latex.ts";
 
 /** Build a ParsedTable the way the analyzer does. */
-function table(body: string, caption?: string): ParsedTable {
+function table(body: string, caption?: string, label?: string): ParsedTable {
 	const parsed = parseTabularBody(body);
-	return { tex: body, rows: parsed.rows, columns: parsed.columns, environment: "tabular", caption };
+	return { tex: body, rows: parsed.rows, columns: parsed.columns, environment: "tabular", caption, label };
 }
 
 const MAIN_V1 = String.raw`\documentclass{article}
@@ -116,18 +116,16 @@ describe("diffTables", () => {
 		expect(diffTables(before, after)).toEqual([]);
 	});
 
-	it("does not claim a whole table changed when the shape moved", () => {
-		// Positions no longer identify the same cell, so cell-level comparison is
-		// skipped rather than invented.
+	it("does not compare cells when a changed shape cannot be aligned", () => {
 		const before = [table("A & B \\\\ 1 & 2 \\\\")];
 		const after = [table("A & B & C \\\\ 1 & 2 & 3 \\\\")];
 
 		const deltas = diffTables(before, after);
 
-		expect(deltas[0]?.shapeChanged).toBe(true);
-		expect(deltas[0]?.fromShape).toBe("2x2");
-		expect(deltas[0]?.toShape).toBe("3x2");
-		expect(deltas[0]?.cells).toEqual([]);
+		expect(deltas).toHaveLength(2);
+		expect(deltas.map((delta) => delta.alignment)).toEqual(["unmatched", "unmatched"]);
+		expect(deltas.every((delta) => delta.cells.length === 0)).toBe(true);
+		expect(formatTableDeltas(deltas).join("\n")).toContain("cell comparison omitted");
 	});
 
 	it("reports added and removed rows for a same-width table", () => {
@@ -138,7 +136,7 @@ describe("diffTables", () => {
 
 		expect(deltas[0]?.rowsAdded).toBe(1);
 		expect(deltas[0]?.rowsRemoved).toBe(0);
-		expect(deltas[0]?.shapeChanged).toBe(true);
+		expect(deltas[0]?.shapeChanged).toBe(false);
 	});
 
 	it("reports an added table", () => {
@@ -146,14 +144,16 @@ describe("diffTables", () => {
 
 		expect(deltas).toHaveLength(1);
 		expect(deltas[0]?.index).toBe(2);
-		expect(deltas[0]?.fromShape).toBe("-");
+		expect(deltas[0]?.toIndex).toBe(2);
+		expect(deltas[0]?.alignment).toBe("unmatched");
 	});
 
 	it("reports a removed table", () => {
 		const deltas = diffTables([table("A & B \\\\ 1 & 2 \\\\"), table("C & D \\\\ 3 & 4 \\\\")], [table("A & B \\\\ 1 & 2 \\\\")]);
 
 		expect(deltas).toHaveLength(1);
-		expect(deltas[0]?.toShape).toBe("-");
+		expect(deltas[0]?.fromIndex).toBe(2);
+		expect(deltas[0]?.alignment).toBe("unmatched");
 	});
 
 	it("reports an unchanged caption change without claiming cells moved", () => {
@@ -175,6 +175,34 @@ describe("diffTables", () => {
 
 		expect(diffTables(before, after)[0]?.cells).toHaveLength(2);
 	});
+	it("aligns labeled tables after an insertion without false numeric changes", () => {
+		const before = [
+			table("Method & Score \\\\ A & 10 \\\\", "Results", "tab:results"),
+			table("Method & Score \\\\ B & 20 \\\\", "Ablation", "tab:ablation"),
+		];
+		const after = [
+			table("Model & Count \\\\ New & 3 \\\\", "New table", "tab:new"),
+			table("Method & Score \\\\ A & 11 \\\\", "Results", "tab:results"),
+			table("Method & Score \\\\ B & 20 \\\\", "Ablation", "tab:ablation"),
+		];
+
+		const deltas = diffTables(before, after);
+		const results = deltas.find((delta) => delta.label === "tab:results");
+
+		expect(results).toMatchObject({ alignment: "label", fromIndex: 1, toIndex: 2 });
+		expect(results?.cells).toEqual([{ row: 2, column: 2, from: "10", to: "11" }]);
+		expect(deltas.find((delta) => delta.label === "tab:new")?.alignment).toBe("unmatched");
+		expect(deltas).toHaveLength(2);
+	});
+
+	it("does not guess between repeated structures when captions and labels are absent", () => {
+		const before = [table("Method & Score \\\\ A & 10 \\\\"), table("Method & Score \\\\ B & 20 \\\\")];
+		const after = [table("Method & Score \\\\ A & 11 \\\\"), table("Method & Score \\\\ B & 21 \\\\")];
+		const deltas = diffTables(before, after);
+
+		expect(deltas).toHaveLength(4);
+		expect(deltas.every((delta) => delta.alignment === "unmatched" && delta.cells.length === 0)).toBe(true);
+	});
 });
 
 describe("formatTableDeltas", () => {
@@ -182,12 +210,15 @@ describe("formatTableDeltas", () => {
 		const delta = diffTables([table("A & B \\\\ 1 & 2 \\\\", "Main results")], [table("A & B \\\\ 1 & 3 \\\\", "Main results")]);
 		const text = formatTableDeltas(delta).join("\n");
 
-		expect(text).toContain("Table 1: Main results");
+		expect(text).toContain("Table 1: Main results (matched by caption)");
 		expect(text).toContain("r2c2: 2 → 3");
 	});
 
 	it("notes shape and caption changes in the heading", () => {
-		const delta = diffTables([table("A & B \\\\ 1 & 2 \\\\", "Old")], [table("A & B & C \\\\ 1 & 2 & 3 \\\\", "New")]);
+		const delta = diffTables(
+			[table("A & B \\\\ 1 & 2 \\\\", "Old", "tab:shape")],
+			[table("A & B & C \\\\ 1 & 2 & 3 \\\\", "New", "tab:shape")],
+		);
 		const text = formatTableDeltas(delta).join("\n");
 
 		expect(text).toContain("caption changed");
@@ -202,6 +233,7 @@ describe("formatTableDeltas", () => {
 	it("bounds the number of cells it lists", () => {
 		const before = [table(Array.from({ length: 60 }, () => "1 & 1 \\\\").join(""))];
 		const after = [table(Array.from({ length: 60 }, () => "2 & 2 \\\\").join(""))];
+		for (const item of [...before, ...after]) item.caption = "Metric";
 		const text = formatTableDeltas(diffTables(before, after), 5).join("\n");
 
 		expect(text).toContain("more changed cell(s)");
@@ -209,6 +241,14 @@ describe("formatTableDeltas", () => {
 });
 
 describe("compareVersions", () => {
+	it("extracts LaTeX table labels for reliable alignment", async () => {
+		const dir = await versionDir("labelled", { "main.tex": MAIN_V1 });
+		const analysis = await analyzeSourceDir(dir);
+
+		expect(analysis.tables[0]?.label).toBe("tab:main");
+		expect(analysis.tables[0]?.caption).toContain("Main results");
+	});
+
 	it("combines files, LaTeX and tables", async () => {
 		const from = await versionDir("v1", { "main.tex": MAIN_V1 });
 		const to = await versionDir("v2", { "main.tex": MAIN_V1.replace("45.7", "46.1").replace("Intro.", "Introduction.") });

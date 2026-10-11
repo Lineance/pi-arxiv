@@ -141,7 +141,7 @@ Commits) hooks.
 | `pull` | download → extract → manifest against a stubbed `fetch` (first run, reuse, force, part filtering, HTTP failure, single-`.tex` e-print) |
 | `index-papers` | corpus classification: missing artifacts, corrupt manifest, staleness, legacy layout |
 | `tools` | config precedence and every tool, through a faked `pi` |
-| `compare` / `lines` | version file, LaTeX table-cell and bounded unified-diff behavior |
+| `compare` / `lines` | version file, label/caption/structure-aligned table diffs and bounded unified-diff behavior |
 | `paper-search` | local abstract/full-text search, ranking, section and line locations |
 | `extension` | the `/arxiv` command end to end |
 | `integration` | pi's own extension loader: tools, command and flags register cleanly |

@@ -260,6 +260,7 @@ export interface LabelMaps {
 
 export interface ParsedTable {
 	tex: string;
+	label?: string | undefined;
 	caption?: string | undefined;
 	rows: string[][];
 	columns: number;
@@ -396,6 +397,8 @@ interface ScanState {
 	title: string | undefined;
 	envStack: string[];
 	currentTable: ParsedTable | undefined;
+	pendingTableLabel: string | undefined;
+	pendingTableCaption: string | undefined;
 }
 
 type TokenHandler = (state: ScanState, match: RegExpExecArray) => void;
@@ -451,7 +454,16 @@ function handleBegin(state: ScanState, match: RegExpExecArray): void {
 		const end = state.flattened.indexOf("\\end{abstract}", match.index + match[0].length);
 		if (end > 0) state.abstract = state.flattened.slice(match.index + match[0].length, end).trim();
 	} else if (TABULAR_BARE.has(bare)) {
-		state.currentTable = { tex: "", rows: [], columns: 0, environment: bare };
+		state.currentTable = {
+			tex: "",
+			rows: [],
+			columns: 0,
+			environment: bare,
+			...(state.pendingTableLabel ? { label: state.pendingTableLabel } : {}),
+			...(state.pendingTableCaption ? { caption: state.pendingTableCaption } : {}),
+		};
+		state.pendingTableLabel = undefined;
+		state.pendingTableCaption = undefined;
 	}
 }
 
@@ -528,6 +540,7 @@ function handleCaption(state: ScanState, match: RegExpExecArray): void {
 		state.counters.tab++;
 		state.tableCaptions.push(inline);
 		if (state.currentTable && !state.currentTable.caption) state.currentTable.caption = inline;
+		else state.pendingTableCaption = inline;
 	} else {
 		state.counters.fig++;
 		state.figureCaptions.push(inline);
@@ -582,6 +595,19 @@ function handleLabel(state: ScanState, match: RegExpExecArray): void {
 	}
 	state.labels.all.set(key, value);
 	state.labels.kind.set(key, kind);
+	if (kind === "tab") {
+		if (state.currentTable) state.currentTable.label = key;
+		else if (state.pendingTableCaption !== undefined) state.pendingTableLabel = key;
+		else if (state.envStack.some((env) => TABLE_ENVS.has(env))) {
+			const lastTable = state.tables.at(-1);
+			if (lastTable && !lastTable.label && lastTable.caption === state.tableCaptions.at(-1)) lastTable.label = key;
+			else state.pendingTableLabel = key;
+		} else {
+			const lastTable = state.tables.at(-1);
+			if (lastTable) lastTable.label = key;
+			else state.pendingTableLabel = key;
+		}
+	}
 }
 
 /**
@@ -632,6 +658,8 @@ export function analyzeTex(flattened: string, mainFile: string, sourceFiles: str
 		title: undefined,
 		envStack: [],
 		currentTable: undefined,
+		pendingTableLabel: undefined,
+		pendingTableCaption: undefined,
 	};
 
 	for (const match of flattened.matchAll(tokenRegex())) {
