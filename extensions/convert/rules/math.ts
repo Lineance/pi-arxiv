@@ -114,13 +114,11 @@ export const mathRule: Rule = {
 		state.markdown = state.markdown.replace(/\$`([\s\S]*?)`\$/g, (_match, body: string) => `$${body.trim()}$`);
 
 		// unwrap \begin{equation} that pandoc already wrapped in $$
-		state.markdown = state.markdown.replace(/\$\$\n([\s\S]*?)\n\$\$/g, (match, body: string) => {
+		state.markdown = state.markdown.replace(/\$\$([\s\S]*?)\$\$/g, (_match, body: string) => {
 			const cleaned = cleanBlock(body);
-			if (cleaned.strippedEnv || cleaned.body !== body.trim()) {
-				if (cleaned.strippedEnv) stripped++;
-				return `$$\n${cleaned.body}\n$$`;
-			}
-			return match;
+			if (cleaned.strippedEnv) stripped++;
+			blocks++;
+			return `$$\n${cleaned.body}\n$$`;
 		});
 
 		state.markdown = normalizeDisplayBlocks(state.markdown);

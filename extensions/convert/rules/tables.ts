@@ -132,14 +132,16 @@ export const tablesRule: Rule = {
 			ordinal++;
 			if (index === undefined) continue;
 			used.add(index);
-			if (!block.broken) continue;
 			const table = tabulars[index];
 			if (!table) continue;
+			const sourceUsesSpans = /\\(?:multirow|multicolumn)\b/.test(table.tex);
+			if (!block.broken && !sourceUsesSpans) continue;
 			const rebuilt = toGfmTable(table);
 			if (!rebuilt) continue;
+			const reason = block.reason ?? "LaTeX source uses multirow/multicolumn";
 			replacements.push({ start: block.startLine, end: block.endLine, text: rebuilt });
 			state.stats.tablesRebuilt++;
-			warn(state, "tables", `table ${index + 1} rebuilt from LaTeX source (${block.reason})`);
+			warn(state, "tables", `table ${index + 1} rebuilt from LaTeX source (${reason})`);
 		}
 
 		if (blocks.length !== tabulars.length && blocks.some((block) => block.broken)) {

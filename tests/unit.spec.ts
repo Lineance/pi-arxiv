@@ -21,7 +21,9 @@ import {
 	toGfmTable,
 } from "../extensions/convert/latex.ts";
 import { labelCaption } from "../extensions/convert/rules/captions.ts";
-import { findTableBlocks } from "../extensions/convert/rules/tables.ts";
+import { mathRule } from "../extensions/convert/rules/math.ts";
+import { findTableBlocks, tablesRule } from "../extensions/convert/rules/tables.ts";
+import type { ConvertState } from "../extensions/convert/rules/types.ts";
 import { extractTarToDir, isUnsafeEntry, parseTar } from "../extensions/util/tar.ts";
 import { makeTar } from "./helpers/fixtures.ts";
 
@@ -249,6 +251,49 @@ describe("broken-table detection", () => {
 
 	it("flags a raw HTML table, which GFM cannot express", () => {
 		expect(findTableBlocks(["<table>", "<tr><td>x</td></tr>", "</table>"])[0]?.broken).toBe(true);
+	});
+});
+
+describe("Pandoc output normalization", () => {
+	it("normalizes Pandoc display math whose opening/closing delimiters share lines with content", () => {
+		const state = {
+			markdown: String.raw`$$\label{1}
+E = mc^2$$`,
+			stats: { equations: 0 },
+			warnings: [],
+		} as unknown as ConvertState;
+
+		mathRule.run(state);
+
+		expect(state.markdown.trimEnd()).toBe("$$\nE = mc^2\n$$");
+		expect(state.markdown).not.toContain("\\label{");
+	});
+
+	it("rebuilds span-based tables even when Pandoc output has no obviously broken cells", () => {
+		const state = {
+			markdown: ["| **Method** | Benchmark | |", "|:---|:---|:---|", "| 2-3 | Success | Rounds |", "| Baseline | 20.1 | 17.7 |"].join("\n"),
+			analysis: {
+				tables: [
+					{
+						tex: String.raw`\multirow{2}{*}{Method} & \multicolumn{2}{c}{Benchmark}`,
+						rows: [
+							["Method", "Benchmark Success", "Benchmark Rounds"],
+							["Baseline", "20.1", "17.7"],
+						],
+						columns: 3,
+						environment: "tabular",
+					},
+				],
+			},
+			tableMode: "gfm",
+			stats: { tablesRebuilt: 0, tables: 0 },
+			warnings: [],
+		} as unknown as ConvertState;
+
+		tablesRule.run(state);
+
+		expect(state.stats.tablesRebuilt).toBe(1);
+		expect(state.markdown).toContain("| Method | Benchmark Success | Benchmark Rounds |");
 	});
 });
 
