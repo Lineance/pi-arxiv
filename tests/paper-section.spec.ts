@@ -13,6 +13,7 @@ import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-age
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { locateMarkdown } from "../extensions/paper/locate.ts";
 import { registerPaperSectionTool } from "../extensions/paper/tool.ts";
+import type { ExecLike } from "../extensions/types.ts";
 
 const PAPER = `---
 title: "Test Paper"
@@ -51,6 +52,11 @@ interface SectionPayload {
 	section?: string | undefined;
 	number?: string | undefined;
 	lines?: number | undefined;
+	lineStart?: number | undefined;
+	lineEnd?: number | undefined;
+	evidenceId?: string | undefined;
+	contentHash?: string | undefined;
+	pdfPages?: { start: number; end: number; confidence: string } | undefined;
 	candidates?: string[] | undefined;
 	text: string;
 }
@@ -61,7 +67,7 @@ interface ToolResult {
 	structuredContent?: SectionPayload;
 }
 
-function load(settings: unknown = {}) {
+function load(settings: unknown = {}, exec?: ExecLike) {
 	const tools = new Map<string, ToolDefinition>();
 	const pi = {
 		getSettings: () => settings,
@@ -69,7 +75,7 @@ function load(settings: unknown = {}) {
 		registerFlag: () => undefined,
 		registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
 	};
-	registerPaperSectionTool(pi as unknown as ExtensionAPI);
+	registerPaperSectionTool(pi as unknown as ExtensionAPI, exec);
 	return tools;
 }
 
@@ -173,6 +179,20 @@ describe("paper_section", () => {
 		expect(result.content[0]?.text).not.toContain("Paired continuations.");
 	});
 
+	it("returns a stable evidence id and Markdown line range", async () => {
+		const papersDir = await withPaper();
+		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "2.2" }, root);
+
+		expect(result.structuredContent).toMatchObject({
+			lineStart: 21,
+			lineEnd: 24,
+			lines: 4,
+			contentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+			evidenceId: expect.stringMatching(/^2609\.35319:L21-24:/),
+		});
+		expect(result.content[0]?.text).toContain("2609.35319:L21-24:");
+	});
+
 	it("returns a parent section with its subsections", async () => {
 		const papersDir = await withPaper();
 		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "2 Method" }, root);
@@ -197,6 +217,24 @@ describe("paper_section", () => {
 		expect(result.content[0]?.text).toContain("Statement.");
 	});
 
+	it("returns approximate PDF page references when matching text is available", async () => {
+		const papersDir = await withPaper();
+		const markdownPath = join(papersDir, "2609.35319", "source", "2609.35319.md");
+		const sectionBody =
+			"Retrieval augmented generation uses sparse embeddings and factual evidence. Reranking improves answer grounding across documents.";
+		await writeFile(markdownPath, PAPER.replace("Trajectory-relative weights.", sectionBody));
+		await writeFile(join(papersDir, "2609.35319", "2609.35319.pdf"), "%PDF");
+		const exec: ExecLike = async () => ({
+			stdout: `Introduction discusses prior work.\f${sectionBody}\fConclusion discusses future work.`,
+			stderr: "",
+			code: 0,
+		});
+		const result = await call(load({ arxiv: { papersDir } }, exec), { id: "2609.35319", section: "2.2" }, root);
+
+		expect(result.structuredContent?.pdfPages).toEqual({ start: 2, end: 2, confidence: "approximate" });
+		expect(result.content[0]?.text).toContain("approx. PDF pages 2-2");
+	});
+
 	it("suggests headings when the name is wrong", async () => {
 		const papersDir = await withPaper();
 		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "empirical nonsense" }, root);
@@ -212,7 +250,7 @@ describe("paper_section", () => {
 		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "2 Method", maxBytes: 128 }, root);
 
 		expect(result.content[0]?.text).toContain("Truncated at 128 bytes");
-		expect(Buffer.byteLength(result.content[0]?.text ?? "", "utf8")).toBeLessThanOrEqual(128);
+		expect(Buffer.byteLength(result.structuredContent?.text ?? "", "utf8")).toBeLessThanOrEqual(128);
 	});
 
 	it("reads an explicit source path, ignoring papersDir", async () => {

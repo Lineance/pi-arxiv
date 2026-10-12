@@ -391,7 +391,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 	registerArxivDiffTool(pi, exec);
 
 	// ------------------------------------------------------------ paper_section
-	registerPaperSectionTool(pi);
+	registerPaperSectionTool(pi, exec);
 
 	// ------------------------------------------------------------ paper_search
 	registerPaperSearchTool(pi);
