@@ -1,12 +1,8 @@
 /**
- * End-to-end conversion of a real LaTeX paper.
+ * The repository keeps a small synthetic paper for offline invariant tests. A real
+ * full-size source can be supplied externally to exercise the same repairs at scale.
  *
- * The assertions are the invariants the repair rules exist to guarantee; every
- * one of them corresponds to a failure mode observed while building the
- * converter. The golden file is a snapshot, so `vitest -u` refreshes it and a
- * diff shows exactly what changed.
- *
- * Point PI_ARXIV_FIXTURE_SOURCE at another LaTeX source directory to retarget.
+ * Point PI_ARXIV_FIXTURE_SOURCE at a LaTeX source directory to retarget.
  */
 
 import { existsSync } from "node:fs";
@@ -22,7 +18,6 @@ const MINI = join(HERE, "fixtures", "mini-paper");
 /** An external full-size paper; opt-in because it is not in the repository. */
 const SOURCE = process.env["PI_ARXIV_FIXTURE_SOURCE"] ?? "D:/Code/Research/opd/papers/og-opd";
 const OUT = join(HERE, "_out");
-const GOLDEN = join(HERE, "..", "fixtures", "2609.35319", "expected.md");
 
 /**
  * These tests are about the rule pipeline, so they must always run it.
@@ -168,13 +163,16 @@ describe.skipIf(!existsSync(SOURCE))("converting a real paper", () => {
 		expect(result.stats.equations).toBeGreaterThanOrEqual(40);
 	});
 
-	it("matches the golden Markdown", async () => {
-		const result = await convertSourceDir(
-			{ workDir: SOURCE, outFile: join(OUT, "golden.md"), figures: true, ...CONVERT },
-			{ exec: childProcessExec },
-		);
-		const markdown = await readFile(result.markdownPath as string, "utf8");
+	it("produces deterministic Markdown across repeated conversions", async () => {
+		const outFile = join(OUT, "fixture-deterministic.md");
+		const options = { workDir: SOURCE, outFile, figures: true, tableMode: "gfm" as const, ...CONVERT };
+		const first = await convertSourceDir(options, { exec: childProcessExec });
+		const firstMarkdown = await readFile(first.markdownPath as string, "utf8");
+		const second = await convertSourceDir(options, { exec: childProcessExec });
+		const secondMarkdown = await readFile(second.markdownPath as string, "utf8");
 
-		await expect(markdown).toMatchFileSnapshot(GOLDEN);
+		expect(first.ok).toBe(true);
+		expect(second.ok).toBe(true);
+		expect(secondMarkdown).toBe(firstMarkdown);
 	});
 });

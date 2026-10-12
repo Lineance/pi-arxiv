@@ -148,13 +148,13 @@ Commits) hooks.
 | `maintenance` | dry-run repair plans and explicitly applied Markdown reconversions |
 | `extension` | the `/arxiv` command end to end |
 | `integration` | pi's own extension loader: tools, command and flags register cleanly |
-| `fixture` | conversion invariants, against a checked-in mini paper plus an optional full-size one |
+| `fixture` | conversion invariants, against a checked-in synthetic mini-paper and an optional externally supplied full-size source |
 | `network` | live arXiv lookup, search, download, convert, re-pull (opt-in) |
 
 The fixture suite asserts the invariants above (no leftover `\ref` anchors, no
 raw float HTML, tables rebuilt, captions restored, reference numbers matching the
 PDF). `tests/fixtures/mini-paper/` is checked in so this runs in CI;
-`PI_ARXIV_FIXTURE_SOURCE=/path/to/paper` adds a full-size paper locally.
+`PI_ARXIV_FIXTURE_SOURCE=/path/to/paper` adds an external full-size source for optional stress coverage.
 
 Coverage thresholds in `vitest.config.ts` are a ratchet pinned to the floor CI
 reaches, so the gate is meaningful on every machine rather than only where the
