@@ -9,6 +9,7 @@
  */
 
 import { basename, extname, join } from "node:path";
+import { cachePathFor, digestSources, outputExclusions, readCache } from "../convert/cache.ts";
 import { listDir, readText, statOf } from "../util/fsx.ts";
 
 export interface CorpusEntry {
@@ -159,6 +160,16 @@ const CORPUS_SIDECARS = new Set(["readme.md", "index.md", "index.json", "manifes
 const STALE_TOLERANCE_MS = 2_000;
 
 async function isStale(markdownPath: string, sourceDir: string): Promise<boolean> {
+	const cache = await readCache(cachePathFor(markdownPath));
+	if (cache) {
+		try {
+			const currentDigest = await digestSources(sourceDir, outputExclusions(markdownPath, sourceDir));
+			return currentDigest !== cache.sourceDigest;
+		} catch {
+			// Fall back to timestamps for unreadable or legacy source trees.
+		}
+	}
+
 	const markdownMtime = await statOf(markdownPath);
 	if (markdownMtime <= 0) return false;
 	return (await newestSourceMtime(sourceDir)) - markdownMtime > STALE_TOLERANCE_MS;

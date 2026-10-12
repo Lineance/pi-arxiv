@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { cachePathFor, digestSources, outputExclusions } from "../extensions/convert/cache.ts";
 import { type CorpusEntry, formatReport, indexPapers, summarizeReport } from "../extensions/corpus/index-papers.ts";
 
 async function put(path: string, content = "x"): Promise<void> {
@@ -143,6 +144,48 @@ describe("staleness", () => {
 			expect(report.entries[0]?.issues.some((issue) => issue.kind === "stale-markdown")).toBe(true);
 		} finally {
 			await rm(staleRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("detects changed source content even when its timestamp is older", async () => {
+		const digestRoot = await mkdtemp(join(tmpdir(), "pi-arxiv-digest-stale-"));
+		try {
+			await healthyPaper(digestRoot, "2609.00007");
+			const sourceDir = join(digestRoot, "2609.00007", "source");
+			const markdownPath = join(sourceDir, "2609.00007.md");
+			const digest = await digestSources(sourceDir, outputExclusions(markdownPath, sourceDir));
+			await writeFile(cachePathFor(markdownPath), JSON.stringify({ sourceDigest: digest }));
+			await writeFile(join(sourceDir, "main.tex"), "changed source with old timestamp");
+			const yesterday = new Date(Date.now() - 86_400_000);
+			await utimes(join(sourceDir, "main.tex"), yesterday, yesterday);
+			await utimes(markdownPath, new Date(), new Date());
+
+			const report = await indexPapers(digestRoot);
+
+			expect(report.entries[0]?.issues.some((issue) => issue.kind === "stale-markdown")).toBe(true);
+		} finally {
+			await rm(digestRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("trusts an unchanged digest even when source timestamps appear newer", async () => {
+		const digestRoot = await mkdtemp(join(tmpdir(), "pi-arxiv-digest-fresh-"));
+		try {
+			await healthyPaper(digestRoot, "2609.00008");
+			const sourceDir = join(digestRoot, "2609.00008", "source");
+			const markdownPath = join(sourceDir, "2609.00008.md");
+			const digest = await digestSources(sourceDir, outputExclusions(markdownPath, sourceDir));
+			await writeFile(cachePathFor(markdownPath), JSON.stringify({ sourceDigest: digest }));
+			const yesterday = new Date(Date.now() - 86_400_000);
+			const now = new Date();
+			await utimes(markdownPath, yesterday, yesterday);
+			await utimes(join(sourceDir, "main.tex"), now, now);
+
+			const report = await indexPapers(digestRoot);
+
+			expect(report.entries[0]?.issues.some((issue) => issue.kind === "stale-markdown")).toBe(false);
+		} finally {
+			await rm(digestRoot, { recursive: true, force: true });
 		}
 	});
 
