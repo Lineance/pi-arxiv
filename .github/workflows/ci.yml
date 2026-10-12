@@ -58,11 +58,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # `npm ci` installs devDependencies only. The packages pi injects at runtime
-      # are peerDependencies on purpose — a committed copy risks duplicate module
-      # instances inside pi — so CI installs them without touching package.json.
-      - name: Install host-provided peers
-        run: npm install --no-save --no-audit --no-fund @earendil-works/pi-coding-agent@^1 typebox@^1
+      # Install host peers in an isolated prefix. Re-running npm install in the
+      # root after npm ci can trigger an Arborist null-target bug in CI matrices.
+      # Linking keeps the host packages out of this extension's published files.
+      - name: Install host-provided peers (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          peer_dir="$RUNNER_TEMP/pi-arxiv-host"
+          mkdir -p "$peer_dir"
+          cd "$peer_dir"
+          npm init --yes
+          npm install --no-save --no-audit --no-fund @earendil-works/pi-coding-agent@^1 typebox@^1
+          cd "$GITHUB_WORKSPACE"
+          PI_HOST_MODULES="$peer_dir/node_modules" npm run dev:link
+
+      - name: Install host-provided peers (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $peerDir = Join-Path $env:RUNNER_TEMP "pi-arxiv-host"
+          New-Item -ItemType Directory -Force $peerDir | Out-Null
+          Push-Location $peerDir
+          npm init --yes
+          npm install --no-save --no-audit --no-fund @earendil-works/pi-coding-agent@^1 typebox@^1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Pop-Location
+          $env:PI_HOST_MODULES = Join-Path $peerDir "node_modules"
+          npm run dev:link
 
       - name: Verify toolchain
         run: npx pandoc --version && npx pdftoppm -v
