@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
 	"arxiv_lookup",
 	"arxiv_pull",
 	"paper_markdown",
+	"paper_repair",
 	"paper_search",
 	"paper_section",
 	"paper_toolchain",
@@ -63,7 +64,7 @@ describe("extension loading", () => {
 		expect([...(loaded.extensions[0]?.flags.keys() ?? [])]).toContain(name);
 	});
 
-	it("exposes only the eight documented tools", () => {
+	it("exposes only the nine documented tools", () => {
 		expect([...(loaded.extensions[0]?.tools.keys() ?? [])].sort()).toEqual([...EXPECTED_TOOLS].sort());
 	});
 });

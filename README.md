@@ -73,6 +73,7 @@ arxiv_lookup    { query: "2609.35319" }                   # metadata only, no do
 arxiv_diff      { id: "2609.35319", from: "v1", to: "v2" } # compare revisions, including table values
 paper_search    { query: "retrieval augmented generation" }    # search the local paper library
 paper_section  { id: "2609.35319", section: "3.2" }           # read with a stable evidence locator
+paper_repair   { id: "2609.35319" }                          # preview before explicit apply=true
 papers_index    {}                                        # what is on disk, what is missing
 paper_markdown  { sourceDir: "./my-paper" }               # any local LaTeX directory
 paper_markdown  { sourceDir: "./my-paper", force: true }   # ignore the conversion cache
@@ -144,6 +145,7 @@ Commits) hooks.
 | `compare` / `lines` | version file, label/caption/structure-aligned table diffs and bounded unified-diff behavior |
 | `paper-search` | local abstract/full-text search, ranking, section and line locations |
 | `evidence` | stable section evidence ids, Markdown line ranges and approximate PDF page mapping |
+| `maintenance` | dry-run repair plans and explicitly applied Markdown reconversions |
 | `extension` | the `/arxiv` command end to end |
 | `integration` | pi's own extension loader: tools, command and flags register cleanly |
 | `fixture` | conversion invariants, against a checked-in mini paper plus an optional full-size one |
@@ -169,7 +171,7 @@ extensions/
 ├── paper/                   # section extraction and local paper search
 ├── arxiv/api.ts             # Atom API: lookup by id, search by title
 ├── arxiv/pull.ts            # download + manifest
-├── corpus/index-papers.ts   # corpus inventory and health report
+├── corpus/                   # corpus inventory and dry-run repair planning
 ├── convert/latex.ts         # LaTeX analysis: counters, labels, outline, tabulars
 ├── convert/pandoc.ts        # pandoc invocation
 ├── convert/convert.ts       # driver

@@ -151,13 +151,14 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the eight tools", () => {
+	it("registers the nine tools", () => {
 		const { tools } = loadTools();
 		expect([...tools.keys()].sort()).toEqual([
 			"arxiv_diff",
 			"arxiv_lookup",
 			"arxiv_pull",
 			"paper_markdown",
+			"paper_repair",
 			"paper_search",
 			"paper_section",
 			"paper_toolchain",
@@ -170,6 +171,7 @@ describe("tool registration", () => {
 		"arxiv_lookup",
 		"arxiv_pull",
 		"paper_markdown",
+		"paper_repair",
 		"paper_search",
 		"paper_section",
 		"paper_toolchain",
@@ -259,6 +261,32 @@ describe("paper_search tool", () => {
 		expect(structured.count).toBe(1);
 		expect(structured.hits[0]).toMatchObject({ id: "2609.00003", section: "3 Results", lineStart: 3 });
 		expect(result.content[0]?.text).toContain("recall");
+	});
+});
+
+describe("paper_repair tool", () => {
+	it("previews a rebuild without writing, then applies it only when confirmed", async () => {
+		const papersDir = join(root, "papers");
+		const sourceDir = join(papersDir, "2609.00004", "source");
+		await mkdir(sourceDir, { recursive: true });
+		await writeFile(
+			join(sourceDir, "main.tex"),
+			"\\documentclass{article}\\title{Repairable}\\begin{document}\\section{Results}Ready.\\end{document}",
+		);
+		await writeFile(
+			join(papersDir, "2609.00004", "manifest.json"),
+			JSON.stringify({ id: "2609.00004", title: "Repairable", version: "v1" }),
+		);
+		const tools = loadTools({ settings: { arxiv: { papersDir } } }).tools;
+		const markdownPath = join(sourceDir, "2609.00004.md");
+
+		const preview = await callTool(tools, "paper_repair", { id: "2609.00004" }, root);
+		expect(preview.structuredContent).toMatchObject({ applied: false, plans: [{ id: "2609.00004", action: "reconvert" }] });
+		expect(existsSync(markdownPath)).toBe(false);
+
+		const applied = await callTool(tools, "paper_repair", { id: "2609.00004", apply: true }, root);
+		expect(applied.structuredContent).toMatchObject({ applied: true, plans: [{ id: "2609.00004", result: "rebuilt" }] });
+		expect(existsSync(markdownPath)).toBe(true);
 	});
 });
 
