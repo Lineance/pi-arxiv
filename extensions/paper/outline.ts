@@ -180,8 +180,36 @@ export function selectSection(outline: Outline, selector: string): SelectResult 
 export interface ExtractOptions {
 	/** Include nested subsections (default true). */
 	includeSubsections?: boolean | undefined;
-	/** Cap the returned text, appending a notice when it truncates. */
+	/** Cap the returned text, including its truncation notice. */
 	maxBytes?: number | undefined;
+}
+
+export const MIN_SECTION_BYTES = 128;
+export const MAX_SECTION_BYTES = 64_000;
+
+function boundedMaxBytes(value: number | undefined): number {
+	if (value === undefined) return 0;
+	if (!Number.isFinite(value)) return MAX_SECTION_BYTES;
+	return Math.max(MIN_SECTION_BYTES, Math.min(MAX_SECTION_BYTES, Math.trunc(value)));
+}
+
+function utf8Prefix(text: string, maxBytes: number): string {
+	let bytes = 0;
+	let end = 0;
+	for (const point of text) {
+		const pointBytes = Buffer.byteLength(point, "utf8");
+		if (bytes + pointBytes > maxBytes) break;
+		bytes += pointBytes;
+		end += point.length;
+	}
+	return text.slice(0, end);
+}
+
+function trimAtTextBoundary(text: string): string {
+	const newline = text.lastIndexOf("\n");
+	if (newline > text.length / 2) return text.slice(0, newline).trimEnd();
+	const space = text.lastIndexOf(" ");
+	return space > text.length / 2 ? text.slice(0, space).trimEnd() : text.trimEnd();
 }
 
 /**
@@ -201,13 +229,12 @@ export function extractSection(outline: Outline, heading: Heading, options: Extr
 
 	const text = outline.lines.slice(heading.startLine, end).join("\n").trimEnd();
 
-	const maxBytes = options.maxBytes ?? 0;
+	const maxBytes = boundedMaxBytes(options.maxBytes);
 	if (maxBytes > 0 && Buffer.byteLength(text, "utf8") > maxBytes) {
-		const slice = Buffer.from(text, "utf8").subarray(0, maxBytes).toString("utf8");
-		// Cut at the last newline so the result cannot end mid-word or mid-escape.
-		const cut = slice.lastIndexOf("\n");
-		const body = cut > maxBytes / 2 ? slice.slice(0, cut) : slice;
-		return `${body}\n\n[${heading.title} truncated at ${maxBytes} bytes; read lines ${heading.startLine + 1}-${end} for the rest]`;
+		const notice = `\n\n[Truncated at ${maxBytes} bytes; read lines ${heading.startLine + 1}-${end} for the rest]`;
+		const budget = maxBytes - Buffer.byteLength(notice, "utf8");
+		const prefix = utf8Prefix(text, budget);
+		return `${trimAtTextBoundary(prefix)}${notice}`;
 	}
 	return text;
 }

@@ -207,9 +207,12 @@ describe("paper_section", () => {
 
 	it("honours maxBytes", async () => {
 		const papersDir = await withPaper();
-		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "2 Method", maxBytes: 60 }, root);
+		const markdownPath = join(papersDir, "2609.35319", "source", "2609.35319.md");
+		await writeFile(markdownPath, PAPER.replace("Trajectory-relative weights.", "Long section content. ".repeat(40)));
+		const result = await call(load({ arxiv: { papersDir } }), { id: "2609.35319", section: "2 Method", maxBytes: 128 }, root);
 
-		expect(result.content[0]?.text).toContain("truncated at 60 bytes");
+		expect(result.content[0]?.text).toContain("Truncated at 128 bytes");
+		expect(Buffer.byteLength(result.content[0]?.text ?? "", "utf8")).toBeLessThanOrEqual(128);
 	});
 
 	it("reads an explicit source path, ignoring papersDir", async () => {

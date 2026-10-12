@@ -266,10 +266,35 @@ describe("extractSection", () => {
 	});
 
 	it("truncates at a line boundary and says so", () => {
-		const text = extractSection(outline, find("2 Method"), { maxBytes: 60 });
-		expect(Buffer.byteLength(text, "utf8")).toBeLessThan(220);
-		expect(text).toContain("truncated at 60 bytes");
+		const text = extractSection(outline, find("2 Method"), { maxBytes: 128 });
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(128);
+		expect(text).toContain("Truncated at 128 bytes");
 		expect(text).toContain("read lines");
+	});
+
+	it("keeps Unicode code points intact and counts the notice in the byte limit", () => {
+		const markdown = `# Unicode\n\n${"方法🙂 café data ".repeat(100)}`;
+		const parsed = parseOutline(markdown);
+		const heading = parsed.headings[0];
+		if (!heading) throw new Error("missing Unicode heading");
+
+		const text = extractSection(parsed, heading, { maxBytes: 160 });
+
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(160);
+		expect(text).toContain("Truncated at 160 bytes");
+		expect(text).not.toContain("�");
+	});
+
+	it("clamps unreasonable byte limits to the supported maximum", () => {
+		const markdown = `# Long\n\n${"word ".repeat(20_000)}`;
+		const parsed = parseOutline(markdown);
+		const heading = parsed.headings[0];
+		if (!heading) throw new Error("missing long heading");
+
+		const text = extractSection(parsed, heading, { maxBytes: Number.MAX_SAFE_INTEGER });
+
+		expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(64_000);
+		expect(text).toContain("Truncated at 64000 bytes");
 	});
 
 	it("does not truncate when the section fits", () => {

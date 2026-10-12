@@ -12,7 +12,7 @@ import { Type } from "typebox";
 import { resolveConfig } from "../cfg.ts";
 import { readText } from "../util/fsx.ts";
 import { locateMarkdown } from "./locate.ts";
-import { extractSection, formatTableOfContents, parseOutline, selectSection } from "./outline.ts";
+import { extractSection, formatTableOfContents, MAX_SECTION_BYTES, MIN_SECTION_BYTES, parseOutline, selectSection } from "./outline.ts";
 
 const DEFAULT_MAX_BYTES = 16_000;
 
@@ -42,7 +42,13 @@ export function registerPaperSectionTool(pi: ExtensionAPI): void {
 				id: Type.Optional(Type.String({ description: "arXiv id to locate under papersDir (alternative to source)" })),
 				section: Type.Optional(Type.String({ description: "Section number, title, or a fragment; omit for the table of contents" })),
 				includeSubsections: Type.Optional(Type.Boolean({ description: "Include nested subsections (default true)" })),
-				maxBytes: Type.Optional(Type.Number({ description: `Cap the returned section (default ${DEFAULT_MAX_BYTES})` })),
+				maxBytes: Type.Optional(
+					Type.Integer({
+						minimum: MIN_SECTION_BYTES,
+						maximum: MAX_SECTION_BYTES,
+						description: `Cap the returned section in UTF-8 bytes (default ${DEFAULT_MAX_BYTES}, max ${MAX_SECTION_BYTES})`,
+					}),
+				),
 			}),
 			annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
 			outputSchema: SectionSchema,
