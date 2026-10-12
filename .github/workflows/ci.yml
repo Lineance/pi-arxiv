@@ -87,7 +87,7 @@ jobs:
           npm run dev:link
 
       - name: Verify toolchain
-        run: npx pandoc --version && npx pdftoppm -v
+        run: pandoc --version && pdftoppm -v
 
       - name: Lint
         run: npm run lint
