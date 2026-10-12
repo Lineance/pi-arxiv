@@ -50,7 +50,7 @@ const PROBES: Record<keyof Toolchain, Probe> = {
 		name: "pdftotext",
 		args: ["-v"],
 		versionPattern: /pdftotext version\s+([0-9.]+)/i,
-		hint: "optional, produces the plain-text extract",
+		hint: "optional, maps section text to approximate PDF pages",
 	},
 };
 

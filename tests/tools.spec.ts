@@ -294,8 +294,10 @@ describe("paper_toolchain tool", () => {
 	it("reports each external tool's availability", async () => {
 		const result = await callTool(loadTools().tools, "paper_toolchain", {}, root);
 
-		expect(result.content[0]?.text).toContain("pandoc");
-		expect(result.content[0]?.text).toContain("pdftoppm");
+		const text = result.content[0]?.text ?? "";
+		expect(text).toContain("pandoc");
+		expect(text).toContain("pdftoppm");
+		expect(loadTools().tools.get("paper_toolchain")?.description).toContain("approximate section-to-PDF page mapping");
 	});
 });
 

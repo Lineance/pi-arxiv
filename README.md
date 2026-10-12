@@ -43,7 +43,7 @@ Everything it had to repair is reported back, so you know which parts of the Mar
 |---|---|---|
 | [pandoc](https://pandoc.org) | LaTeX → Markdown | conversion fails with a clear message |
 | `pdftoppm` (poppler) | rasterizing figure PDFs | Markdown keeps `.pdf` image links |
-| `pdftotext` (poppler) | optional plain-text extract | skipped |
+| `pdftotext` (poppler) | optional approximate PDF page references for `paper_section` | Markdown line evidence remains available |
 
 Run `paper_toolchain` (or ask the agent to check) to see what is available.
 There are **no runtime npm dependencies** — even tar/gzip extraction is in-tree — so a local install needs no `npm install`.

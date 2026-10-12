@@ -406,7 +406,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			name: "paper_toolchain",
 			label: "Paper toolchain check",
 			description:
-				"Report whether the external tools needed by the paper pipeline are available (pandoc for LaTeX→Markdown, pdftotext for text extracts, pdftoppm for figure rasterization), with versions and install hints.",
+				"Report whether the external tools needed by the paper pipeline are available (pandoc for LaTeX→Markdown, pdftoppm for figure rasterization, pdftotext for approximate section-to-PDF page mapping), with versions and install hints.",
 			promptSnippet: "paper_toolchain — check pandoc/pdftotext/pdftoppm availability",
 			parameters: Type.Object({}),
 			annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
