@@ -13,7 +13,7 @@
  * Run after `npm install`:   npm run dev:link
  */
 
-import { existsSync, mkdirSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -69,7 +69,14 @@ function tryResolve(specifier) {
 
 function link(target, linkPath) {
 	mkdirSync(dirname(linkPath), { recursive: true });
-	if (existsSync(linkPath)) rmSync(linkPath, { recursive: true, force: true });
+	// lstat detects dangling links that existsSync cannot see.
+	try {
+		const existing = lstatSync(linkPath);
+		if (process.platform === "win32" && existing.isSymbolicLink()) rmdirSync(linkPath);
+		else rmSync(linkPath, { recursive: true, force: true });
+	} catch (error) {
+		if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) throw error;
+	}
 	// "junction" is required on Windows without developer mode; it is a plain
 	// directory symlink elsewhere.
 	symlinkSync(target, linkPath, process.platform === "win32" ? "junction" : "dir");
