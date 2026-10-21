@@ -13,6 +13,7 @@ papers/2609.35319/
 ├── 2609.35319-src.tar.gz     # the raw e-print (provenance)
 ├── abs.md                    # title/authors/abstract as Markdown
 ├── manifest.json             # URLs, sha256, toolchain versions, outputs, warnings
+├── figures/png/…             # figures rasterized for preview
 └── source/
     ├── main.tex              # extracted LaTeX source
     └── figures/…             # original figure PDFs
@@ -40,19 +41,20 @@ Everything it had to repair is reported back, so you know which parts of the Mar
 
 | Tool | Needed for | Missing → |
 |---|---|---|
+| `parse5` (bundled dependency) | HTML section reading | installed automatically with the package |
 | [pandoc](https://pandoc.org) | LaTeX → Markdown | conversion fails with a clear message |
-| `pdftoppm` (poppler) | rasterizing figure PDFs | Markdown keeps `.pdf` image links |
-| `pdftotext` (poppler) | optional approximate PDF page references for `paper_section` | Markdown line evidence remains available |
+| `pdftoppm` (poppler) | PDF page images and figure rasterization | image mode unavailable; figure PDFs stay linked |
+| `pdftotext` (poppler) | PDF page text and approximate section-to-page mapping | PDF text reads and page mapping unavailable |
 
 Run `paper_toolchain` (or ask the agent to check) to see what is available.
 
-HTML section parsing uses the `parse5` runtime package. LaTeX-to-Markdown additionally requires pandoc; Poppler provides optional figure rasterization and PDF text extraction.
+`parse5` is installed automatically as a runtime dependency. LaTeX-to-Markdown additionally requires pandoc; Poppler provides optional PDF page extraction, page rendering, and figure rasterization.
 
 ## Install
 
 ```bash
 pi install ./pi-arxiv          # from a local checkout
-pi install npm:@lineance/pi-arxiv  # once published
+pi install npm:@lineance/pi-arxiv  # after the package is published
 pi --extension ./pi-arxiv/extensions/index.ts   # try without installing
 ```
 
@@ -118,7 +120,7 @@ CLI flags for one invocation: `--arxiv-dir=<path>`, `--arxiv-no-figures`, `--arx
 
 ## Behaviour and guarantees
 
-- **Idempotent.** Re-running reuses the PDF/source by file size, and skips the conversion when nothing that affects it changed (source digest, pandoc version, and the relevant options). `force: true` re-downloads and reconverts; `cache: false` disables reuse; deleting `<paper>.md.cache.json` forces a rebuild.
+- **Idempotent.** Re-running a download reuses verified PDF/source files; Markdown conversion skips when source digest, pandoc version, and conversion options are unchanged. `force: true` on `arxiv_pull` re-downloads; `force: true` on `arxiv_markdown` rebuilds the conversion; `cache: false` disables conversion reuse.
 - **Resilient downloads.** Every request has a per-attempt timeout and bounded retry with backoff (connection timeouts, resets, DNS failures, 408/429/5xx). 4xx other than 429 fails fast. Failures name the URL and the cause.
 - **Safe by construction.** The e-print archive is unpacked by an in-tree reader that refuses absolute paths, drive letters, `..`, and symlinks; LaTeX is never compiled, so `\write18` cannot execute anything.
 - **Polite to arXiv.** Metadata requests are serialized with a ≥3 s gap and a descriptive User-Agent (the API's stated requirement).
