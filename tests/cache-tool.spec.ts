@@ -114,30 +114,53 @@ describe("arxiv_pull", () => {
 		vi.stubGlobal("fetch", impl);
 	}
 
-	it("reuses the conversion on a second pull", async () => {
+	it("reuses downloaded files on a second pull and never converts implicitly", async () => {
 		stubFetch();
 		const tools = load();
 
 		const first = await call(tools, "arxiv_pull", { query: "2609.35319" }, root);
-		const markdownPath = (first.structuredContent as { markdownPath: string }).markdownPath;
-		expect(existsSync(markdownPath)).toBe(true);
+		const structured = first.structuredContent as { pdfPath: string; sourceDir: string };
+		expect(existsSync(structured.pdfPath)).toBe(true);
+		expect(existsSync(join(structured.sourceDir, "2609.35319.md"))).toBe(false);
 
 		const second = await call(tools, "arxiv_pull", { query: "2609.35319" }, root);
-
-		// The pull itself reuses the downloads, and the conversion is reused too.
-		expect((second.structuredContent as { markdownPath: string }).markdownPath).toBe(markdownPath);
 		expect(second.content[0]?.text).toContain("reused");
+		expect(second.structuredContent).not.toHaveProperty("markdownPath");
 	});
 
-	it("does not reuse a conversion after a forced re-download", async () => {
+	it("runs Markdown generation as a separate background job and writes to the paper directory", async () => {
 		stubFetch();
 		const tools = load();
-
 		await call(tools, "arxiv_pull", { query: "2609.35319" }, root);
-		const forced = await call(tools, "arxiv_pull", { query: "2609.35319", force: true }, root);
+		const started = await call(tools, "arxiv_markdown", { id: "2609.35319" }, root);
+		const jobId = (started.structuredContent as { jobId: string }).jobId;
+		expect(started.content[0]?.text).toContain(jobId);
 
-		// A forced pull rewrites the source, so reusing the old Markdown would be
-		// wrong even if the bytes happen to match.
-		expect(forced.content[0]?.text).not.toContain("cached:");
+		let status: ToolResult | undefined;
+		for (let attempt = 0; attempt < 200; attempt++) {
+			status = await call(tools, "arxiv_status", { id: jobId }, root);
+			const jobs = (status.structuredContent as { jobs: Array<{ state: string }> }).jobs;
+			if (jobs[0]?.state === "completed" || jobs[0]?.state === "failed") break;
+			await new Promise((resolve) => setTimeout(resolve, 25));
+		}
+		const job = (status?.structuredContent as { jobs: Array<{ state: string; markdownPath?: string }> } | undefined)?.jobs[0];
+		if (!job) throw new Error("Markdown job status was not returned");
+		expect(job.state).toBe("completed");
+		expect(job.markdownPath).toBe(join(root, "papers", "2609.35319", "2609.35319.md"));
+		if (!job.markdownPath) throw new Error("Markdown path missing from completed job");
+		expect(existsSync(job.markdownPath)).toBe(true);
+	});
+
+	it("preserves a generated Markdown file when sources are force-pulled", async () => {
+		stubFetch();
+		const tools = load();
+		const first = await call(tools, "arxiv_pull", { query: "2609.35319" }, root);
+		const sourceDir = (first.structuredContent as { sourceDir: string }).sourceDir;
+		const markdownPath = join(root, "papers", "2609.35319", "2609.35319.md");
+		await writeFile(markdownPath, "existing output");
+
+		await call(tools, "arxiv_pull", { query: "2609.35319", force: true }, root);
+		expect(existsSync(markdownPath)).toBe(true);
+		expect(existsSync(sourceDir)).toBe(true);
 	});
 });

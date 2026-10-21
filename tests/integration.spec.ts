@@ -19,7 +19,10 @@ const ENTRY = join(HERE, "extensions", "index.ts");
 const EXPECTED_TOOLS = [
 	"arxiv_diff",
 	"arxiv_lookup",
+	"arxiv_markdown",
 	"arxiv_pull",
+	"arxiv_read",
+	"arxiv_status",
 	"paper_markdown",
 	"paper_repair",
 	"paper_search",
@@ -64,7 +67,7 @@ describe("extension loading", () => {
 		expect([...(loaded.extensions[0]?.flags.keys() ?? [])]).toContain(name);
 	});
 
-	it("exposes only the nine documented tools", () => {
+	it("exposes the twelve documented tools", () => {
 		expect([...(loaded.extensions[0]?.tools.keys() ?? [])].sort()).toEqual([...EXPECTED_TOOLS].sort());
 	});
 });

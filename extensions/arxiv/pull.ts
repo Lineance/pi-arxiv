@@ -155,7 +155,7 @@ function renderAbsMarkdown(meta: ArxivMeta): string {
 	return `${parts.join("\n")}`.replace(/\n{3,}/g, "\n\n");
 }
 
-async function readManifest(path: string): Promise<Manifest | undefined> {
+export async function readPaperManifest(path: string): Promise<Manifest | undefined> {
 	if (!(await exists(path))) return undefined;
 	try {
 		return JSON.parse(await readText(path)) as Manifest;
@@ -197,7 +197,7 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	await ensureDir(destDir);
 	options.signal?.throwIfAborted();
 
-	const previousManifest = await readManifest(manifestPath);
+	const previousManifest = await readPaperManifest(manifestPath);
 	options.signal?.throwIfAborted();
 	const manifest: Manifest = previousManifest ?? {
 		id: meta.id,

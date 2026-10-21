@@ -11,17 +11,20 @@ import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { lookupById, parseArxivId, searchByTitle } from "./arxiv/api.ts";
-import { pull } from "./arxiv/pull.ts";
+import { parseArxivId } from "./arxiv/api.ts";
+import { createMarkdownJobManager, type MarkdownJob, type MarkdownJobManager } from "./arxiv/markdown-jobs.ts";
+import { readPaperManifest } from "./arxiv/pull.ts";
+import { pullArxivPaper, resolveArxivPaper, searchArxiv } from "./arxiv/workflow.ts";
 import { LIB_VERSION, resolveConfig } from "./cfg.ts";
 import { registerArxivDiffTool } from "./compare/tool.ts";
 import { convertSourceDir, summarizeStats, summarizeWarnings } from "./convert/convert.ts";
 import { type CorpusBadge, formatReport, indexPapers, issueBadge } from "./corpus/index-papers.ts";
 import { registerPaperRepairTool } from "./corpus/repair.ts";
+import { registerArxivReadTool } from "./paper/read.ts";
 import { registerPaperSearchTool } from "./paper/search.ts";
 import { registerPaperSectionTool } from "./paper/tool.ts";
-import type { ArxivMeta, ConvertResult, ConvertWarning, ExecLike } from "./types.ts";
-import { writeFileQueued } from "./util/fsx.ts";
+import type { ArxivMeta, ConvertWarning, ExecLike } from "./types.ts";
+import { exists } from "./util/fsx.ts";
 import { detectToolchain } from "./util/toolchain.ts";
 
 const WarningSchema = Type.Object({
@@ -72,7 +75,11 @@ function formatMeta(meta: ArxivMeta): string {
 	return lines.join("\n");
 }
 
-export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
+function formatJob(job: MarkdownJob): string {
+	return `${job.jobId} ${job.paperId} ${job.state}: ${job.phase}${job.markdownPath ? ` (${job.markdownPath})` : ""}${job.error ? ` — ${job.error}` : ""}`;
+}
+
+export function registerTools(pi: ExtensionAPI, exec: ExecLike, jobs: MarkdownJobManager = createMarkdownJobManager()): void {
 	// ------------------------------------------------------------ arxiv_lookup
 	pi.registerTool(
 		defineTool({
@@ -104,8 +111,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			}),
 			async execute(_id, params, signal) {
 				const query = params.query.trim();
-				const byId = parseArxivId(query);
-				const matches = byId ? [await lookupById(query, { signal })] : await searchByTitle(query, params.limit ?? 3, { signal });
+				const matches = await searchArxiv(query, params.limit ?? 3, { signal });
 				if (matches.length === 0) return { content: [{ type: "text", text: `No arXiv match for: ${query}` }], details: undefined };
 				const text = matches.map((meta) => formatMeta(meta)).join("\n\n---\n\n");
 				return {
@@ -135,21 +141,14 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 			name: "arxiv_pull",
 			label: "arXiv download",
 			description:
-				"Download an arXiv paper: PDF, LaTeX e-print source (extracted, path-traversal safe), metadata, and a manifest.json for provenance. With convert=true the source is immediately turned into clean Markdown (KaTeX-safe math, rebuilt tables, restored captions/abstract). Existing files are reused unless force=true.",
-			promptSnippet: "arxiv_pull — download PDF + LaTeX source (+ optional Markdown) for an arXiv paper",
-			promptGuidelines: [
-				"For 'read/summarise this arXiv paper' requests, call arxiv_pull with convert=true, then read the returned markdownPath with the read tool.",
-				"Prefer the converted Markdown over the PDF: the Markdown URL and mode for each artifact are listed in the tool result and manifest.json.",
-			],
+				"Download an arXiv paper's PDF, LaTeX e-print source and metadata into the local paper library. Markdown conversion is a separate background operation via arxiv_markdown.",
+			promptSnippet: "arxiv_pull — download PDF, LaTeX source and metadata without converting",
+			promptGuidelines: ["Pull a paper before requesting local PDF page reads or Markdown conversion."],
 			parameters: Type.Object({
 				query: Type.String({ description: "arXiv id, URL, or title" }),
 				destDir: Type.Optional(Type.String({ description: "Directory for this paper (default: <papersDir>/<id>)" })),
 				version: Type.Optional(Type.String({ description: "Pin a version, e.g. v1 (default: latest)" })),
-				parts: Type.Optional(
-					Type.Array(Type.String({ description: "pdf | source | abs" }), { description: "Which parts to download (default all)" }),
-				),
-				convert: Type.Optional(Type.Boolean({ description: "Convert the LaTeX source to Markdown right away (default true)" })),
-				figures: Type.Optional(Type.Boolean({ description: "Rasterize figure PDFs to PNG (default from settings)" })),
+				parts: Type.Optional(Type.Array(Type.Union([Type.Literal("pdf"), Type.Literal("source"), Type.Literal("abs")]))),
 				force: Type.Optional(Type.Boolean({ description: "Re-download even if files exist" })),
 			}),
 			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -159,28 +158,17 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 				dir: Type.String(),
 				pdfPath: Type.Optional(Type.String()),
 				sourceDir: Type.Optional(Type.String()),
-				markdownPath: Type.Optional(Type.String()),
 				manifestPath: Type.String(),
 				warnings: Type.Array(WarningSchema),
 			}),
 			async execute(_id, params, signal, onUpdate, ctx: ExtensionToolContext) {
-				const config = resolveConfig(pi, ctx.cwd, {
-					papersDir: params.destDir ? resolve(ctx.cwd, params.destDir) : undefined,
-					figures: params.figures,
-				});
-				const byId = parseArxivId(params.query);
-				onUpdate?.({ content: [{ type: "text", text: byId ? `Resolving ${byId.id}…` : "Searching arXiv…" }], details: undefined });
-				const matches = byId ? [await lookupById(params.query, { signal })] : await searchByTitle(params.query, 1, { signal });
-				const meta = matches[0];
-				if (!meta) return { content: [{ type: "text", text: `No arXiv match for: ${params.query}` }], details: undefined };
-
-				const destDir = params.destDir ? resolve(ctx.cwd, params.destDir) : join(config.papersDir, meta.id);
-				const parts = (params.parts ?? ["pdf", "source", "abs"]).filter(
-					(part): part is "pdf" | "source" | "abs" => part === "pdf" || part === "source" || part === "abs",
-				);
-				const pulled = await pull(meta, {
-					destDir,
-					parts,
+				const config = resolveConfig(pi, ctx.cwd);
+				const destDir = params.destDir ? resolve(ctx.cwd, params.destDir) : undefined;
+				onUpdate?.({ content: [{ type: "text", text: "Resolving arXiv paper…" }], details: undefined });
+				const { meta, pulled } = await pullArxivPaper(params.query, {
+					papersDir: config.papersDir,
+					...(destDir ? { destDir } : {}),
+					parts: params.parts,
 					version: params.version,
 					force: params.force,
 					timeoutMs: config.timeoutMs,
@@ -189,67 +177,108 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 					onRetry: (attempt, error) =>
 						onUpdate?.({ content: [{ type: "text", text: `retry ${attempt}: ${error.message}` }], details: undefined }),
 				});
-
-				let converted: ConvertResult | undefined;
-				if ((params.convert ?? true) && pulled.sourceDir) {
-					onUpdate?.({ content: [{ type: "text", text: `Converting ${meta.id} to Markdown…` }], details: undefined });
-					converted = await convertSourceDir(
-						{
-							workDir: pulled.sourceDir,
-							outFile: join(pulled.sourceDir, `${meta.id}.md`),
-							figures: config.figures,
-							figureDpi: config.figureDpi,
-							tableMode: config.tableMode,
-							arxivMeta: meta,
-							// A forced pull re-downloads, so its conversion must not be reused.
-							force: params.force,
-						},
-						{ exec, signal, log: (message) => onUpdate?.({ content: [{ type: "text", text: message }], details: undefined }) },
-					);
-					pulled.manifest.outputs.markdown = converted.markdownPath;
-					pulled.manifest.outputs.conversion = converted.stats;
-					pulled.manifest.warnings = [...pulled.manifest.warnings, ...(converted.warnings ?? [])];
-					await writeFileQueued(pulled.manifestPath, `${JSON.stringify(pulled.manifest, null, 2)}\n`);
-				}
-
 				const lines = [
 					`${meta.id}${meta.version ?? ""} — ${meta.title}`,
-					`directory: ${destDir}`,
+					`directory: ${pulled.destDir}`,
 					pulled.pdfPath ? `pdf: ${pulled.pdfPath}` : "",
 					pulled.sourceDir ? `source: ${pulled.sourceDir}` : "",
-					converted?.markdownPath ? `markdown: ${converted.markdownPath}` : "",
 					`manifest: ${pulled.manifestPath}`,
-					converted?.markdownPath ? `stats: ${summarizeStats(converted.stats)}` : "",
 					pulled.reused.length > 0 ? `reused: ${pulled.reused.length} existing file(s)` : "",
-					...warningLines([...pulled.warnings, ...(converted?.warnings ?? [])]),
+					...warningLines(pulled.warnings),
 				].filter(Boolean);
-
 				return {
 					content: [{ type: "text", text: lines.join("\n") }],
-					details: {
-						id: meta.id,
-						version: pulled.version,
-						markdownPath: converted?.markdownPath,
-						stats: converted?.stats,
-						figures: converted?.figures,
-						warnings: [...pulled.warnings, ...(converted?.warnings ?? [])],
-					},
+					details: { id: meta.id, version: pulled.version, warnings: pulled.warnings },
 					structuredContent: {
 						id: meta.id,
 						version: pulled.version,
-						dir: destDir,
+						dir: pulled.destDir,
 						...(pulled.pdfPath ? { pdfPath: pulled.pdfPath } : {}),
 						...(pulled.sourceDir ? { sourceDir: pulled.sourceDir } : {}),
-						...(converted?.markdownPath ? { markdownPath: converted.markdownPath } : {}),
 						manifestPath: pulled.manifestPath,
-						warnings: warningJson([...pulled.warnings, ...(converted?.warnings ?? [])]),
+						warnings: warningJson(pulled.warnings),
 					},
 				};
 			},
 		}),
 	);
 
-	// ------------------------------------------------------------ paper_markdown
+	// ------------------------------------------------------------ arxiv_markdown
+	pi.registerTool(
+		defineTool({
+			name: "arxiv_markdown",
+			label: "Build paper Markdown",
+			description:
+				"Queue clean Markdown conversion for a paper already pulled into the local library. Returns immediately with a session-scoped job id; poll arxiv_status for completion.",
+			promptSnippet: "arxiv_markdown — start a separate background conversion of a pulled LaTeX source",
+			parameters: Type.Object({ id: Type.String(), papersDir: Type.Optional(Type.String()), force: Type.Optional(Type.Boolean()) }),
+			annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+			outputSchema: Type.Object({ jobId: Type.String(), paperId: Type.String(), state: Type.String(), phase: Type.String() }),
+			async execute(_id, params, _signal, _onUpdate, ctx: ExtensionToolContext) {
+				const parsed = parseArxivId(params.id);
+				if (!parsed) throw new Error(`Not an arXiv id: ${params.id}`);
+				const config = resolveConfig(pi, ctx.cwd, params.papersDir ? { papersDir: resolve(ctx.cwd, params.papersDir) } : {});
+				const meta = await resolveArxivPaper(parsed.id, { signal: _signal });
+				const paperDir = join(config.papersDir, parsed.id);
+				const sourceDir = join(paperDir, "source");
+				const manifestPath = join(paperDir, "manifest.json");
+				const manifest = await readPaperManifest(manifestPath);
+				if (!manifest || !(await exists(sourceDir)))
+					throw new Error(`No pulled LaTeX source found for ${parsed.id}; run /arxiv pull ${parsed.id} first.`);
+				const job = jobs.start({
+					meta,
+					paperDir,
+					sourceDir,
+					manifestPath,
+					manifest,
+					config,
+					exec,
+					...(params.force !== undefined ? { force: params.force } : {}),
+				});
+				const jobContent = { jobId: job.jobId, paperId: job.paperId, state: job.state, phase: job.phase };
+				return {
+					content: [{ type: "text", text: `Markdown ${job.state}: ${job.jobId} (${job.paperId})` }],
+					details: jobContent,
+					structuredContent: jobContent,
+				};
+			},
+		}),
+	);
+
+	// ------------------------------------------------------------ arxiv_status
+	pi.registerTool(
+		defineTool({
+			name: "arxiv_status",
+			label: "arXiv job status",
+			description: "Get Markdown conversion job status for the current Pi session, by job id or paper id.",
+			promptSnippet: "arxiv_status — check current-session Markdown conversion jobs",
+			parameters: Type.Object({ id: Type.Optional(Type.String({ description: "Job id or arXiv id; omit to list current jobs" })) }),
+			annotations: { readOnlyHint: true, openWorldHint: false, idempotentHint: true },
+			execute(_id, params) {
+				const found = jobs.get(params.id);
+				const jobJson = found.map((job) => ({
+					jobId: job.jobId,
+					paperId: job.paperId,
+					state: job.state,
+					phase: job.phase,
+					startedAt: job.startedAt,
+					...(job.finishedAt ? { finishedAt: job.finishedAt } : {}),
+					...(job.markdownPath ? { markdownPath: job.markdownPath } : {}),
+					...(job.error ? { error: job.error } : {}),
+				}));
+				return Promise.resolve({
+					content: [
+						{ type: "text", text: found.length ? found.map(formatJob).join("\n") : "No matching Markdown jobs in this Pi session." },
+					],
+					details: { jobs: jobJson },
+					structuredContent: { jobs: jobJson },
+				});
+			},
+		}),
+	);
+
+	registerArxivReadTool(pi, exec);
+
 	pi.registerTool(
 		defineTool({
 			name: "paper_markdown",
@@ -389,7 +418,7 @@ export function registerTools(pi: ExtensionAPI, exec: ExecLike): void {
 	);
 
 	// ------------------------------------------------------------ arxiv_diff
-	registerArxivDiffTool(pi, exec);
+	registerArxivDiffTool(pi);
 
 	// ------------------------------------------------------------ paper_section
 	registerPaperSectionTool(pi, exec);

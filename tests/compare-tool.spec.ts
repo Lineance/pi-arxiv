@@ -15,7 +15,6 @@ import { gzipSync } from "node:zlib";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerArxivDiffTool } from "../extensions/compare/tool.ts";
-import { childProcessExec } from "../extensions/convert/convert.ts";
 import { makeTar } from "./helpers/fixtures.ts";
 
 /** v2 differs in one number and one file, which is the case worth detecting. */
@@ -72,7 +71,7 @@ function load(): Map<string, ToolDefinition> {
 		registerFlag: () => undefined,
 		registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
 	};
-	registerArxivDiffTool(pi as unknown as ExtensionAPI, childProcessExec);
+	registerArxivDiffTool(pi as unknown as ExtensionAPI);
 	return tools;
 }
 
@@ -147,8 +146,17 @@ describe("arxiv_diff", () => {
 		expect(text).toContain("~ main.tex");
 	});
 
-	it("includes both text diffs, including the converted Markdown", async () => {
+	it("includes a Markdown diff only when both versions already have generated Markdown", async () => {
 		stubFetch({ v1: MAIN_V1, v2: MAIN_V2 });
+		const paperDir = join(papersDir, "2609.35319");
+		for (const [version, number] of [
+			["v1", "45.7"],
+			["v2", "46.1"],
+		] as const) {
+			const versionDir = join(paperDir, "versions", version);
+			await mkdir(versionDir, { recursive: true });
+			await writeFile(join(versionDir, "2609.35319.md"), `# Results\n\nOurs: ${number}\n`);
+		}
 		const tools = load();
 
 		const result = await diff(tools, { id: "2609.35319", from: "v1", to: "v2" }, root);
@@ -157,8 +165,8 @@ describe("arxiv_diff", () => {
 		expect(text).toContain("## Table changes");
 		expect(text).toContain("## LaTeX diff");
 		expect(text).toContain("## Converted Markdown diff");
-		expect(text).toContain("-Ours & 45.7 & 5.6");
-		expect(text).toContain("+Ours & 46.1 & 5.6");
+		expect(text).toContain("-Ours: 45.7");
+		expect(text).toContain("+Ours: 46.1");
 		expect(result.structuredContent?.hasMarkdownDiff).toBe(true);
 	});
 
@@ -170,8 +178,8 @@ describe("arxiv_diff", () => {
 
 		expect(existsSync(join(papersDir, "2609.35319", "versions", "v1", "source", "main.tex"))).toBe(true);
 		expect(existsSync(join(papersDir, "2609.35319", "versions", "v2", "source", "main.tex"))).toBe(true);
-		// The generated Markdown lives beside source/, not inside it.
-		expect(existsSync(join(papersDir, "2609.35319", "versions", "v1", "2609.35319.diff.md"))).toBe(true);
+		// Diff no longer starts an implicit Markdown conversion.
+		expect(existsSync(join(papersDir, "2609.35319", "versions", "v1", "2609.35319.md"))).toBe(false);
 	});
 
 	it("does not mistake an older primary manifest for the current version", async () => {

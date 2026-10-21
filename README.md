@@ -9,14 +9,13 @@ A [pi](https://pi.dev) package that fetches arXiv papers as **PDF + LaTeX e-prin
 ```
 papers/2609.35319/
 ├── 2609.35319.pdf            # the PDF, unchanged
+├── 2609.35319.md             # generated separately for quick discovery
 ├── 2609.35319-src.tar.gz     # the raw e-print (provenance)
 ├── abs.md                    # title/authors/abstract as Markdown
 ├── manifest.json             # URLs, sha256, toolchain versions, outputs, warnings
 └── source/
     ├── main.tex              # extracted LaTeX source
-    ├── figures/…             # original figure PDFs
-    ├── 2609.35319.md         # ← the converted Markdown
-    └── figures/png/…         # figures rasterized for preview
+    └── figures/…             # original figure PDFs
 ```
 
 ## Why convert from LaTeX instead of the PDF
@@ -46,13 +45,14 @@ Everything it had to repair is reported back, so you know which parts of the Mar
 | `pdftotext` (poppler) | optional approximate PDF page references for `paper_section` | Markdown line evidence remains available |
 
 Run `paper_toolchain` (or ask the agent to check) to see what is available.
-There are **no runtime npm dependencies** — even tar/gzip extraction is in-tree — so a local install needs no `npm install`.
+
+HTML section parsing uses the `parse5` runtime package. LaTeX-to-Markdown additionally requires pandoc; Poppler provides optional figure rasterization and PDF text extraction.
 
 ## Install
 
 ```bash
 pi install ./pi-arxiv          # from a local checkout
-pi install npm:pi-arxiv        # once published
+pi install npm:@lineance/pi-arxiv  # once published
 pi --extension ./pi-arxiv/extensions/index.ts   # try without installing
 ```
 
@@ -66,30 +66,37 @@ to this package because it is an extension. Approve once with `pi -a`, or run
 In the agent:
 
 ```
-arxiv_pull  { query: "2609.35319" }                       # download + convert
-arxiv_pull  { query: "https://arxiv.org/abs/2609.35319", figures: false }
-arxiv_pull  { query: "Outcome-Guided On-Policy Distillation..." }   # by title
-arxiv_lookup    { query: "2609.35319" }                   # metadata only, no download
-arxiv_diff      { id: "2609.35319", from: "v1", to: "v2" } # compare revisions, including table values
-paper_search    { query: "retrieval augmented generation" }    # search the local paper library
-paper_section  { id: "2609.35319", section: "3.2" }           # read with a stable evidence locator
-paper_repair   { id: "2609.35319" }                          # preview before explicit apply=true
-papers_index    {}                                        # what is on disk, what is missing
-paper_markdown  { sourceDir: "./my-paper" }               # any local LaTeX directory
-paper_markdown  { sourceDir: "./my-paper", force: true }   # ignore the conversion cache
-paper_toolchain {}                                        # pandoc / pdftoppm / pdftotext
+arxiv_pull   { query: "2609.35319" }                                  # download PDF + LaTeX + metadata, no conversion
+arxiv_markdown { id: "2609.35319" }                                   # queue a separate background conversion
+arxiv_status { id: "<job-id>" }                                       # poll current-session job status
+arxiv_read   { id: "2609.35319", section: "3.2" }                    # HTML first, local Markdown fallback
+arxiv_read   { id: "2609.35319", pageStart: 4, pageEnd: 5 }            # PDF text by default
+arxiv_read   { id: "2609.35319", pageStart: 4, format: "image" }      # render a PDF page
+arxiv_lookup { query: "2609.35319" }                                  # metadata only, no download
+arxiv_diff   { id: "2609.35319", from: "v1", to: "v2" }             # compare revisions; Markdown diff if both exist
+paper_search { query: "retrieval augmented generation" }               # search the local paper library
+paper_section { id: "2609.35319", section: "3.2" }                    # read converted Markdown with evidence locator
+paper_repair { id: "2609.35319" }                                      # preview before explicit apply=true
+papers_index {}                                                        # inventory the local library
+paper_markdown { sourceDir: "./my-paper" }                             # synchronously convert a local LaTeX directory
+paper_toolchain {}                                                      # pandoc / pdftoppm / pdftotext
 ```
 
 Or as a command:
 
 ```
-/arxiv 2609.35319
-/arxiv https://arxiv.org/abs/2609.35319 --force --no-figures
-/arxiv 2609.35319 --papers-dir=D:/papers --version=v2
+/arxiv search retrieval augmented generation
+/arxiv pull 2609.35319
+/arxiv read 2609.35319 --section=3.2
+/arxiv read 2609.35319 --pages=4-5 --format=image
+/arxiv markdown 2609.35319
+/arxiv status
+/arxiv diff 2609.35319 --from=v1 --to=v2
 ```
 
-`--papers-dir` overrides the corpus root, so the paper keeps its `<id>/` layout;
-the `arxiv_pull` tool's `destDir` names one paper's own directory.
+`pull` downloads only. Markdown conversion is a separate background task; `status` reports jobs from the current Pi session. Section reads prefer arXiv HTML, then existing local Markdown. If neither is available, request PDF pages explicitly. PDF page reads require a prior pull and support text (default) or rendered images.
+
+`--papers-dir` overrides the corpus root. Downloaded sources stay in `<papersDir>/<id>/source/`; generated Markdown is stored at `<papersDir>/<id>/<id>.md`, next to the PDF and manifest. The `arxiv_pull` tool's `destDir` names one paper's own directory.
 
 ## Configuration
 

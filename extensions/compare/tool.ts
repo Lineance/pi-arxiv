@@ -14,15 +14,13 @@
 
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { lookupById, parseArxivId } from "../arxiv/api.ts";
 import { pull } from "../arxiv/pull.ts";
 import { LIB_VERSION, resolveConfig } from "../cfg.ts";
-import { convertSourceDir } from "../convert/convert.ts";
-import type { ExecLike } from "../types.ts";
 import { formatUnified, type LineDiff, summarizeDiff } from "./lines.ts";
 import { compareVersions, formatTableDeltas, summarizeComparison } from "./versions.ts";
 
@@ -57,20 +55,21 @@ interface Materialised {
 	markdownPath?: string | undefined;
 }
 
-export function registerArxivDiffTool(pi: ExtensionAPI, exec: ExecLike): void {
+export function registerArxivDiffTool(pi: ExtensionAPI): void {
 	pi.registerTool(
 		defineTool({
 			name: "arxiv_diff",
 			label: "arXiv version diff",
 			description:
-				"Compare two versions of the same arXiv paper (for example v1 and v2). Reports which source files were added, removed or changed, which table cells changed value, and a bounded line-level diff of the LaTeX and of the converted Markdown. Use it to see what a revision actually changed before citing a number.",
-			promptSnippet: "arxiv_diff — compare two versions of a paper, including changed table numbers",
+				"Compare two versions of the same arXiv paper (for example v1 and v2). Reports changed source files, table-cell values, and bounded LaTeX diffs. It includes a Markdown diff only when both versions already have generated Markdown; it never starts conversion implicitly.",
+			promptSnippet: "arxiv_diff — compare two versions, including Markdown only when both converted",
 			promptGuidelines: [
 				"Use arxiv_diff before quoting a number from a paper that has more than one version, to check whether it moved.",
 				"The table section lists changed cells; treat those as the citation-relevant part of the revision.",
 			],
 			parameters: Type.Object({
 				id: Type.String({ description: "arXiv id (both sides are versions of this one paper)" }),
+				papersDir: Type.Optional(Type.String({ description: "Override the configured local paper-library root" })),
 				from: Type.String({ description: 'Base version, e.g. "v1"' }),
 				to: Type.String({ description: 'Compared version, e.g. "v2", or "latest"' }),
 				maxDiffLines: Type.Optional(
@@ -86,7 +85,7 @@ export function registerArxivDiffTool(pi: ExtensionAPI, exec: ExecLike): void {
 					return fail(`"${params.id}" is not an arXiv id. A version diff needs one specific paper, so a title is not enough.`);
 				}
 
-				const config = resolveConfig(pi, ctx.cwd);
+				const config = resolveConfig(pi, ctx.cwd, params.papersDir ? { papersDir: resolve(ctx.cwd, params.papersDir) } : {});
 				const meta = await lookupById(parsed.id, { signal });
 				const paperDir = join(config.papersDir, meta.id);
 				const want = {
@@ -101,8 +100,8 @@ export function registerArxivDiffTool(pi: ExtensionAPI, exec: ExecLike): void {
 				let from: Materialised;
 				let to: Materialised;
 				try {
-					from = await materialise(want.from, meta, paperDir, exec, signal);
-					to = await materialise(want.to, meta, paperDir, exec, signal);
+					from = await materialise(want.from, meta, paperDir, signal);
+					to = await materialise(want.to, meta, paperDir, signal);
 				} catch (error) {
 					return fail(`Could not obtain both versions: ${(error as Error).message}`, { id: meta.id, from: want.from, to: want.to });
 				}
@@ -179,19 +178,24 @@ async function materialise(
 	version: string,
 	meta: Awaited<ReturnType<typeof lookupById>>,
 	paperDir: string,
-	exec: ExecLike,
 	signal: AbortSignal | undefined,
 ): Promise<Materialised> {
 	const primarySource = join(paperDir, "source");
 	if (meta.version === version && existsSync(primarySource) && (await primaryManifestMatches(paperDir, version))) {
-		return { version, sourceDir: primarySource, markdownPath: await convert(primarySource, meta.id, exec, signal) };
+		return { version, sourceDir: primarySource, markdownPath: await findMarkdown(paperDir, meta.id) };
 	}
 
 	const destDir = join(paperDir, "versions", version);
 	const pulled = await pull(meta, { destDir, version, parts: ["source"], timeoutMs: 120_000, signal, libVersion: LIB_VERSION });
 	if (!pulled.sourceDir) throw new Error(`no LaTeX source available for ${version}`);
+	return { version, sourceDir: pulled.sourceDir, markdownPath: await findMarkdown(destDir, meta.id) };
+}
 
-	return { version, sourceDir: pulled.sourceDir, markdownPath: await convert(pulled.sourceDir, meta.id, exec, signal) };
+function findMarkdown(paperDir: string, id: string): string | undefined {
+	for (const candidate of [join(paperDir, `${id}.md`), join(paperDir, "source", `${id}.md`)]) {
+		if (existsSync(candidate)) return candidate;
+	}
+	return undefined;
 }
 
 async function primaryManifestMatches(paperDir: string, version: string): Promise<boolean> {
@@ -201,22 +205,6 @@ async function primaryManifestMatches(paperDir: string, version: string): Promis
 	} catch {
 		return false;
 	}
-}
-
-/**
- * Convert a version for the Markdown diff; figures are irrelevant to a diff.
- *
- * The output goes *beside* the source directory rather than inside it: the
- * comparison walks everything under `source/`, so a generated file there would
- * show up as a changed file in every diff — our own output masquerading as a
- * revision.
- */
-async function convert(workDir: string, id: string, exec: ExecLike, signal: AbortSignal | undefined): Promise<string | undefined> {
-	const result = await convertSourceDir(
-		{ workDir, outFile: join(dirname(workDir), `${id}.diff.md`), figures: false },
-		{ exec, log: () => undefined, signal },
-	);
-	return result.ok ? result.markdownPath : undefined;
 }
 
 function renderDiff(fromLabel: string, toLabel: string, diff: LineDiff, maxLines: number): string {

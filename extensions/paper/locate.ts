@@ -19,8 +19,8 @@ export interface LocateResult {
  * Find the Markdown for a paper.
  *
  * Accepts an explicit file, a paper directory, or a corpus root plus id. The
- * layout the converter writes is `<papersDir>/<id>/source/<id>.md`, but an
- * explicit path always wins so a hand-edited copy can be read.
+ * layout the converter writes is `<papersDir>/<id>/<id>.md`, with legacy
+ * `<papersDir>/<id>/source/<id>.md` accepted as a fallback.
  */
 export async function locateMarkdown(input: {
 	source?: string | undefined;
@@ -50,14 +50,11 @@ export async function locateMarkdown(input: {
 
 	if (input.id) {
 		const paperDir = join(input.papersDir, input.id);
+		const namedAtRoot = considerFile(join(paperDir, `${input.id}.md`));
+		if (namedAtRoot) return { markdownPath: namedAtRoot, searched };
+
 		const fromSource = await firstMarkdownIn(join(paperDir, "source"));
 		if (fromSource) return { markdownPath: fromSource, searched };
-
-		const named = considerFile(join(paperDir, "source", `${input.id}.md`));
-		if (named) return { markdownPath: named, searched };
-
-		const fromPaperDir = await firstMarkdownIn(paperDir);
-		if (fromPaperDir) return { markdownPath: fromPaperDir, searched };
 	}
 
 	return { searched };

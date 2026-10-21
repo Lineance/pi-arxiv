@@ -151,12 +151,15 @@ describe("configuration precedence", () => {
 });
 
 describe("tool registration", () => {
-	it("registers the nine tools", () => {
+	it("registers the twelve tools", () => {
 		const { tools } = loadTools();
 		expect([...tools.keys()].sort()).toEqual([
 			"arxiv_diff",
 			"arxiv_lookup",
+			"arxiv_markdown",
 			"arxiv_pull",
+			"arxiv_read",
+			"arxiv_status",
 			"paper_markdown",
 			"paper_repair",
 			"paper_search",
@@ -169,7 +172,10 @@ describe("tool registration", () => {
 	it.each([
 		"arxiv_diff",
 		"arxiv_lookup",
+		"arxiv_markdown",
 		"arxiv_pull",
+		"arxiv_read",
+		"arxiv_status",
 		"paper_markdown",
 		"paper_repair",
 		"paper_search",
@@ -278,7 +284,7 @@ describe("paper_repair tool", () => {
 			JSON.stringify({ id: "2609.00004", title: "Repairable", version: "v1" }),
 		);
 		const tools = loadTools({ settings: { arxiv: { papersDir } } }).tools;
-		const markdownPath = join(sourceDir, "2609.00004.md");
+		const markdownPath = join(papersDir, "2609.00004", "2609.00004.md");
 
 		const preview = await callTool(tools, "paper_repair", { id: "2609.00004" }, root);
 		expect(preview.structuredContent).toMatchObject({ applied: false, plans: [{ id: "2609.00004", action: "reconvert" }] });
@@ -333,7 +339,7 @@ See Table~\ref{tab:x}.
 });
 
 describe("arxiv_pull tool", () => {
-	it("downloads, converts and points at the Markdown", async () => {
+	it("downloads the source and PDF without creating Markdown", async () => {
 		stubFetch();
 		const { tools } = loadTools();
 
@@ -342,7 +348,7 @@ describe("arxiv_pull tool", () => {
 		const structured = result.structuredContent as { markdownPath?: string; pdfPath?: string; manifestPath: string; dir: string };
 		expect(result.content[0]?.text).toContain("Outcome-Guided On-Policy Distillation");
 		expect(structured.pdfPath && existsSync(structured.pdfPath)).toBe(true);
-		expect(structured.markdownPath && existsSync(structured.markdownPath)).toBe(true);
+		expect(structured.markdownPath).toBeUndefined();
 		expect(existsSync(structured.manifestPath)).toBe(true);
 	});
 
@@ -355,13 +361,12 @@ describe("arxiv_pull tool", () => {
 		expect((result.structuredContent as { dir: string }).dir).toBe(join(root, "custom"));
 	});
 
-	it("can skip conversion", async () => {
+	it("can select only the requested download parts", async () => {
 		stubFetch();
 		const { tools } = loadTools();
 
-		const result = await callTool(tools, "arxiv_pull", { query: "2609.35319", convert: false }, root);
-
-		expect(result.structuredContent).not.toHaveProperty("markdownPath");
+		const result = await callTool(tools, "arxiv_pull", { query: "2609.35319", parts: ["source"] }, root);
+		expect(result.structuredContent).not.toHaveProperty("pdfPath");
 		expect((result.structuredContent as { sourceDir?: string }).sourceDir).toBeDefined();
 	});
 

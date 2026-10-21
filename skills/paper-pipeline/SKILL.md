@@ -1,81 +1,41 @@
 ---
 name: paper-pipeline
-description: Fetch arXiv papers and turn LaTeX sources into clean Markdown. Use when asked to read, summarise, compare, or extract numbers from a paper (arXiv id, arXiv URL, or a local LaTeX/PDF directory), or when a paper needs to be downloaded for offline reference.
+description: Search, fetch, read, compare, and maintain arXiv papers in the local pi library. Use for arXiv ids, titles, URLs, paper questions, section/page evidence, or LaTeX-to-Markdown conversion.
 ---
 
-# Paper pipeline
+# Paper Pipeline
 
-Two halves: **fetch** (arXiv → local files) and **convert** (LaTeX → clean Markdown).
+Use the smallest operation that satisfies the request. Downloading a paper does not generate Markdown. Markdown is an explicit background task.
 
-## Fetching a paper
+## Find and pull
 
-Use `arxiv_pull` — it downloads, extracts, converts, and records provenance in one call.
+- Use `arxiv_lookup` or `/arxiv search <query>` to resolve a title or inspect metadata. Exact arXiv ids can be looked up directly.
+- Use `arxiv_pull` or `/arxiv pull <id|url|title>` to download the PDF, LaTeX source, abstract, and provenance manifest. This does not convert the source.
+- The default library layout is `<papersDir>/<id>/`: PDF, manifest, abstract, generated `<id>.md`, and extracted source under `source/`.
+- A PDF page read requires the PDF to exist locally. Pull first if it is missing.
 
-```
-arxiv_pull { query: "2609.35319" }                 # id, URL, or title
-arxiv_pull { query: "<title>", convert: false }    # just the files
-arxiv_pull { query: "<id>", figures: false }       # skip figure rasterization
-```
+## Read a paper
 
-Default layout, `<papersDir>/<id>/`:
+Prefer section-based reading. Call `arxiv_read` with `id` and `section` (number or title). It reads arXiv HTML first, then an existing local Markdown file. If neither exists, ask for explicit PDF pages instead of guessing section boundaries.
 
-| Path | Contents |
-|---|---|
-| `<id>.pdf` | the original PDF |
-| `source/` | extracted LaTeX (`main.tex`, `figures/`, `.bib`) |
-| `source/<id>.md` | **the converted Markdown — read this, not the PDF** |
-| `source/figures/png/` | figures rasterized for preview |
-| `abs.md` | title / authors / abstract |
-| `manifest.json` | URLs, SHA-256, toolchain versions, conversion warnings |
+PDF page reads use `pageStart` and optional inclusive `pageEnd`. `format` is `text` by default; choose `image` when equations, tables, figures, or layout are important. A single call is limited to five pages. Page numbering is 1-based.
 
-`papersDir` defaults to `<cwd>/papers`, overridable with the `arxiv` settings key or `--arxiv-dir`.
+For generated Markdown with stable local line evidence, use `paper_section`. Omit `section` to list headings, then request the relevant section. It reports Markdown line ranges and an approximate PDF page mapping when available. Use `paper_search` for lexical search across the local library.
 
-### Reading a paper
+## Generate Markdown
 
-1. `arxiv_pull { query: "<id>" }`
-2. `read` the returned `markdownPath`.
-3. Prefer the Markdown over the PDF: equations, tables, and reference numbers are faithful, and it is searchable with `grep`.
+Run `arxiv_markdown { id }` or `/arxiv markdown <id>` only when a durable, searchable Markdown copy is useful. It queues conversion for a paper already pulled into the library and returns a current-session job id. Poll with `arxiv_status { id: "<job-id>" }` or `/arxiv status <job-id>`; a completed job reports its Markdown path. Jobs do not survive Pi session shutdown. Use `force: true` to rebuild an existing conversion.
 
-If the paper is already downloaded, skip step 1 and read `source/<id>.md` directly.
+Markdown is written to `<papersDir>/<id>/<id>.md`, beside the PDF and manifest. The extracted LaTeX remains under `source/`. Figure links are relative to the Markdown output. The manifest records the generated path, conversion statistics, and warnings.
 
-### Choosing a tool
+`paper_markdown` remains the synchronous converter for an arbitrary local LaTeX directory. `paper_repair` previews stale or missing library Markdown; only pass `apply: true` after the user approves the rebuild.
 
-- `arxiv_lookup` — metadata only, no download. Cheap; use it to turn a fuzzy title into an id.
-- `arxiv_pull` — the normal path.
-- `paper_markdown` — convert a LaTeX directory that did **not** come from arXiv (a local checkout, an Overleaf export, a supplementary archive).
-- `paper_toolchain` — when a conversion failed, check pandoc/poppler before assuming the source is bad.
+## Compare and diagnose
 
-## Trusting the output
+- Use `arxiv_diff` or `/arxiv diff <id> --from=v1 --to=v2` for source and table changes. It does not generate Markdown; a Markdown diff is included only when both versions already have converted Markdown.
+- Use `papers_index` for a read-only library inventory.
+- Use `paper_toolchain` when a conversion or PDF page operation reports a missing system tool.
 
-The converter repairs a lot, and every repair is reported. Read the `warnings` in the tool result (and in `manifest.json`) before quoting numbers:
+## Trust the output
 
-| Warning | What it means |
-|---|---|
-| `tables: table N rebuilt from LaTeX source` | the table came from the LaTeX `tabular`, so cell values are trustworthy, but merged cells were flattened |
-| `captions: Figure N caption restored from LaTeX source` | pandoc dropped the caption; it was recovered by position, so verify it matches the figure |
-| `captions: Table N caption inserted from LaTeX source` | same, for a table |
-| `structure: abstract restored from LaTeX source` | the class hid the abstract from pandoc |
-| `refs: N reference(s) had no matching LaTeX label` | that reference stayed as its raw text — check it in the PDF |
-| `refs: no .bib file found` | citations are unresolved keys like `[chen2026futurebridge]`, not author-year |
-| `lint: <problem>` | something looks like a conversion failure — open the PDF for that section |
-| `figures: ... left as .pdf links` | `pdftoppm` is missing; the images are still correct, just not previewable |
-
-Never present a rebuilt table's numbers as if they were verbatim from the paper without noting the rebuild when the numbers are load-bearing.
-
-## Converting a local LaTeX directory
-
-```
-paper_markdown { sourceDir: "./my-paper" }
-paper_markdown { sourceDir: "./my-paper", mainTex: "paper.tex", figures: false }
-paper_markdown { sourceDir: "./my-paper", keepIntermediate: true }   # also keep raw pandoc output
-```
-
-Requirements: a `.tex` file with `\documentclass` (auto-detected, or pass `mainTex`), and `pandoc` on `PATH`. Figures resolve relative to `sourceDir`.
-
-## Failure modes
-
-- **`pandoc not found`** — install pandoc; there is no fallback, because PDF text extraction loses every equation.
-- **No source available** (`source download failed`) — some papers have no e-print. Fall back to the PDF and say so; the Markdown will not exist.
-- **Unrecognised e-print container** — kept as `source/source.bin`; report it rather than guessing.
-- **Wrong `main.tex` picked** — pass `mainTex` explicitly.
-- **Garbled math** — the source uses a macro package the expander does not know. Read the LaTeX in `source/` for that equation.
+Read warnings before relying on extracted values. Rebuilt tables are sourced from LaTeX and flattened merged cells; unresolved citation keys stay as keys; missing figure rasterization leaves PDF links. PDF text extraction is layout-dependent. Use `format: "image"` for pages where visual structure matters.

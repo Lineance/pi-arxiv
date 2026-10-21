@@ -117,6 +117,17 @@ describe("locateMarkdown", () => {
 		expect(found.markdownPath).toBe(join(source, "2609.35319.md"));
 	});
 
+	it("prefers the paper-root generated Markdown over a legacy source copy", async () => {
+		const paperDir = join(root, "papers", "2609.35319");
+		const source = join(paperDir, "source");
+		await mkdir(source, { recursive: true });
+		await writeFile(join(source, "2609.35319.md"), "legacy");
+		await writeFile(join(paperDir, "2609.35319.md"), PAPER);
+
+		const found = await locateMarkdown({ id: "2609.35319", papersDir: join(root, "papers"), cwd: root });
+		expect(found.markdownPath).toBe(join(paperDir, "2609.35319.md"));
+	});
+
 	it("accepts an explicit file", async () => {
 		const file = join(root, "converted.md");
 		await writeFile(file, PAPER);
@@ -266,7 +277,7 @@ describe("paper_section", () => {
 		const result = await call(load({ arxiv: { papersDir: join(root, "empty") } }), { id: "9999.99999" }, root);
 
 		expect(result.content[0]?.text).toContain("No converted Markdown found");
-		expect(result.content[0]?.text).toContain("arxiv_pull");
+		expect(result.content[0]?.text).toContain("arxiv_markdown");
 	});
 
 	it("reads a real converted paper end to end", async () => {

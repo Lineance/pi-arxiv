@@ -105,6 +105,12 @@ async function inspectEntry(papersDir: string, name: string, files: Awaited<Retu
 		}
 	}
 
+	const rootMarkdown = files.find((file) => !file.dir && file.name.toLowerCase() === `${name.toLowerCase()}.md`);
+	if (rootMarkdown) {
+		entry.markdown = rootMarkdown.path;
+		entry.bytes = Math.max(entry.bytes, rootMarkdown.size);
+	}
+
 	const abstract = files.find((file) => !file.dir && file.name === "abs.md");
 	if (abstract) entry.abstractMd = abstract.path;
 

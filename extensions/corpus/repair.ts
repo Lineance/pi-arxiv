@@ -2,9 +2,11 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { readPaperManifest } from "../arxiv/pull.ts";
 import { resolveConfig } from "../cfg.ts";
 import { convertSourceDir } from "../convert/convert.ts";
 import type { ExecLike } from "../types.ts";
+import { writeFileQueued } from "../util/fsx.ts";
 import { indexPapers } from "./index-papers.ts";
 
 export interface PaperRepairPlan {
@@ -84,7 +86,7 @@ export function registerPaperRepairTool(pi: ExtensionAPI, exec: ExecLike): void 
 						? isAbsolute(plan.markdownPath)
 							? plan.markdownPath
 							: resolve(plan.dir, plan.markdownPath)
-						: join(sourceDir, `${plan.id}.md`);
+						: join(plan.dir, `${plan.id}.md`);
 					const converted = await convertSourceDir(
 						{
 							workDir: sourceDir,
@@ -96,6 +98,18 @@ export function registerPaperRepairTool(pi: ExtensionAPI, exec: ExecLike): void 
 						},
 						{ exec, signal },
 					);
+					if (converted.ok && converted.markdownPath) {
+						const manifestPath = join(plan.dir, "manifest.json");
+						const manifest = await readPaperManifest(manifestPath);
+						if (manifest) {
+							manifest.outputs ??= {};
+							manifest.warnings ??= [];
+							manifest.outputs.markdown = converted.markdownPath;
+							manifest.outputs.conversion = converted.stats;
+							manifest.warnings = [...manifest.warnings, ...converted.warnings];
+							await writeFileQueued(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+						}
+					}
 					results.push({ ...plan, markdownPath, result: converted.ok ? "rebuilt" : "failed" });
 				}
 

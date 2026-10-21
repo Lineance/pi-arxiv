@@ -155,6 +155,16 @@ async function renderImage(state: ConvertState, image: ImageRef, outDir: string)
 	}
 }
 
+async function normalizeLocalImagePaths(state: ConvertState): Promise<void> {
+	for (const image of new Set(collectImages(state.markdown))) {
+		if (/^(?:https?:|data:)/.test(image) || isAbsolute(image) || image.includes("?")) continue;
+		const sourcePath = join(state.workDir, image);
+		if (!(await exists(sourcePath))) continue;
+		const outputPath = relative(state.outDir, sourcePath).split("\\").join("/");
+		state.markdown = state.markdown.split(`](${image})`).join(`](${outputPath})`);
+	}
+}
+
 export const figuresRule: Rule = {
 	id: "figures",
 	description: "unwrap float HTML, rasterize figure PDFs, normalize image links",
@@ -162,6 +172,7 @@ export const figuresRule: Rule = {
 		state.markdown = unwrapFloats(state.markdown);
 		const { map } = { map: await rasterize(state, collectImages(state.markdown)) };
 		for (const [from, to] of map) state.markdown = state.markdown.split(from).join(to);
+		await normalizeLocalImagePaths(state);
 		state.stats.images = collectImages(state.markdown).length;
 	},
 };

@@ -109,6 +109,13 @@ describe("classification", () => {
 		expect(entry?.pdf).toBeTruthy();
 	});
 
+	it("prefers paper-root Markdown and still recognizes the legacy source layout", async () => {
+		await put(join(root, "2609.00001", "2609.00001.md"), "# New output location");
+		const report = await indexPapers(root);
+		const entry = report.entries.find((candidate) => candidate.id === "2609.00001");
+		expect(entry?.markdown).toBe(join(root, "2609.00001", "2609.00001.md"));
+	});
+
 	it("warns when the Markdown is absent", () => {
 		const issue = byId.get("2609.00002")?.issues.find((candidate) => candidate.kind === "no-markdown");
 		expect(issue?.level).toBe("warn");

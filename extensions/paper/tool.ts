@@ -247,7 +247,7 @@ function bullets(items: string[]): string {
 
 function notFoundMessage(searched: string[]): string {
 	const hint = searched.length > 0 ? `\nsearched:\n${bullets(searched)}` : "";
-	return `No converted Markdown found. Pass source=<path to .md> or id=<arXiv id>, or run arxiv_pull first.${hint}`;
+	return `No converted Markdown found. Pass source=<path to .md> or id=<arXiv id>, or pull the paper and run arxiv_markdown first.${hint}`;
 }
 
 function fail(text: string) {

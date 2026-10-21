@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Split `/arxiv` into `search`, `pull`, `read`, `markdown`, `status`, and `diff` actions; retain bare-id shorthand as a pull alias.
+- Make `arxiv_pull` download-only. Add session-scoped background Markdown conversion and job status tools.
+- Add `arxiv_read` for HTML-first section reading and PDF page text/image output, defaulting to text.
+- Write generated Markdown beside the PDF at `<papersDir>/<id>/<id>.md`; keep legacy source-directory Markdown discoverable.
+- Add `parse5` for robust HTML section parsing and update the paper-pipeline skill for the explicit workflow.
+
 ## 0.1.0
 
 Initial release.

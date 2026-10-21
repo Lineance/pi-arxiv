@@ -1,10 +1,9 @@
 {
-	"name": "pi-arxiv",
+	"name": "@lineance/pi-arxiv",
 	"version": "0.1.0",
 	"description": "Pi extension: fetch arXiv papers (PDF + LaTeX e-print) and convert them into clean, KaTeX-safe Markdown.",
 	"type": "module",
 	"license": "MIT",
-	"private": true,
 	"keywords": [
 		"pi-package",
 		"pi-extension",
@@ -54,5 +53,8 @@
 		"verify": "npm run lint && npm run typecheck && npm run knip && npm run test:coverage",
 		"verify:full": "npm run verify",
 		"verify:network": "npm run verify && npm run test:network"
+	},
+	"dependencies": {
+		"parse5": "^8.0.1"
 	}
 }
