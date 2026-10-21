@@ -5,6 +5,7 @@ on:
     branches: ["**"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 # A queued run for an older commit has nothing to add once a newer one exists.
 concurrency:

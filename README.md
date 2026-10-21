@@ -143,6 +143,20 @@ depending on them: a committed copy risks duplicate module instances inside pi.
 `hooks:install` wires the pre-commit (verify) and commit-msg (Conventional
 Commits) hooks.
 
+## Release
+
+`.github/workflows/release.yml` publishes on a `vX.Y.Z` tag after reusing the
+full CI workflow. It verifies that the tag matches `package.json` and that the
+version is not already on npm, then publishes with GitHub OIDC provenance. No
+long-lived npm token is stored in GitHub secrets.
+
+Before the first automated release, configure a Trusted Publisher in the npm
+settings for `@laboon85/pi-arxiv`: provider **GitHub Actions**, owner `Lineance`,
+repository `pi-arxiv`, workflow `release.yml`. Enable direct `npm publish` for
+the trusted publisher. The account must have 2FA enabled. The already published
+`0.1.0` predates this workflow; future releases require a version bump, a
+matching `vX.Y.Z` tag, and pushing that tag.
+
 | Suite | Covers |
 |---|---|
 | `cache` | conversion reuse: what invalidates it, and that it does not invalidate itself by writing its own output |
