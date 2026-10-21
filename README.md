@@ -55,7 +55,7 @@ Run `paper_toolchain` (or ask the agent to check) to see what is available.
 
 ```bash
 pi install ./pi-arxiv          # from a local checkout
-pi install npm:@laboon85/pi-arxiv  # after the package is published
+pi install npm:@laboon85/pi-arxiv
 pi --extension ./pi-arxiv/extensions/index.ts   # try without installing
 ```
 
