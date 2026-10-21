@@ -3,10 +3,13 @@
  * Requests are serialized with a polite delay (arXiv asks for ~3s between calls).
  */
 
+import { parser as createSaxParser, type QualifiedAttribute, type QualifiedTag, type SAXOptions, type Tag } from "sax";
 import type { ArxivMeta } from "../types.ts";
 import { fetchWithRetry, type HttpOptions } from "../util/http.ts";
 
 const API_ENDPOINT = "https://export.arxiv.org/api/query";
+const ATOM_NAMESPACE = "http://www.w3.org/2005/Atom";
+const ARXIV_NAMESPACE = "http://arxiv.org/schemas/atom";
 
 /** arXiv asks for a gap between requests; production keeps it, tests set 0. */
 export const DEFAULT_MIN_INTERVAL_MS = 3_000;
@@ -51,82 +54,132 @@ export function parseArxivId(input: string): { id: string; version?: string | un
 	return { id: match[1], version: match[2] };
 }
 
-function tag(xml: string, name: string): string | undefined {
-	const match = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i").exec(xml);
-	if (!match?.[1]) return undefined;
-	return decodeEntities(match[1]).replace(/\s+/g, " ").trim();
+interface AtomNode {
+	localName: string;
+	namespaceURI: string;
+	attributes: Record<string, string>;
+	content: Array<string | AtomNode>;
 }
 
-function tagAll(xml: string, name: string): string[] {
-	const out: string[] = [];
-	const re = new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "gi");
-	for (const match of xml.matchAll(re)) {
-		const value = decodeEntities(match[1] ?? "")
-			.replace(/\s+/g, " ")
-			.trim();
-		if (value) out.push(value);
+/** Build only the small tree arXiv metadata needs, using strict XML and namespace parsing. */
+function parseAtom(xml: string): AtomNode[] {
+	const roots: AtomNode[] = [];
+	const stack: AtomNode[] = [];
+	let parseError: Error | undefined;
+	const options = { xmlns: true, strictEntities: true, maxEntityCount: 512, maxEntityDepth: 4 } as SAXOptions & {
+		strictEntities: boolean;
+		maxEntityCount: number;
+		maxEntityDepth: number;
+	};
+	const parser = createSaxParser(true, options);
+
+	parser.onopentag = (tag: Tag | QualifiedTag) => {
+		const attributes: Record<string, string> = {};
+		for (const [name, value] of Object.entries(tag.attributes)) {
+			attributes[name] = typeof value === "string" ? value : (value as QualifiedAttribute).value;
+		}
+		const qualifiedTag = tag as QualifiedTag;
+		const node: AtomNode = {
+			localName: qualifiedTag.local ?? tag.name.split(":").at(-1) ?? tag.name,
+			namespaceURI: qualifiedTag.uri,
+			attributes,
+			content: [],
+		};
+		const parent = stack.at(-1);
+		if (parent) parent.content.push(node);
+		else roots.push(node);
+		stack.push(node);
+	};
+	parser.ontext = (text) => stack.at(-1)?.content.push(text);
+	parser.oncdata = (text) => stack.at(-1)?.content.push(text);
+	parser.onclosetag = () => stack.pop();
+	parser.ondoctype = () => (parseError ??= new Error("DOCTYPE is not permitted in arXiv Atom feeds"));
+	parser.onerror = (error) => (parseError ??= error);
+
+	try {
+		parser.write(xml).close();
+	} catch (error) {
+		parseError ??= error instanceof Error ? error : new Error(String(error));
 	}
-	return out;
+	if (parseError) throw new Error(`Malformed arXiv Atom feed: ${parseError.message}`);
+	return roots;
 }
 
-function decodeEntities(text: string): string {
-	return text
-		.replace(/&lt;/g, "<")
-		.replace(/&gt;/g, ">")
-		.replace(/&quot;/g, '"')
-		.replace(/&#39;|&apos;/g, "'")
-		.replace(/&amp;/g, "&");
+function children(node: AtomNode, localName: string, namespaceURI?: string): AtomNode[] {
+	return node.content.filter(
+		(item): item is AtomNode =>
+			typeof item !== "string" && item.localName === localName && (namespaceURI === undefined || item.namespaceURI === namespaceURI),
+	);
 }
 
-function entries(xml: string): string[] {
-	const out: string[] = [];
-	for (const match of xml.matchAll(/<entry>([\s\S]*?)<\/entry>/gi)) {
-		if (match[1]) out.push(match[1]);
-	}
-	return out;
+function child(node: AtomNode, localName: string, namespaceURI?: string): AtomNode | undefined {
+	return children(node, localName, namespaceURI)[0];
 }
 
-function toMeta(entry: string): ArxivMeta | undefined {
-	const rawId = tag(entry, "id");
+function textContent(node: AtomNode | undefined): string {
+	if (!node) return "";
+	return node.content
+		.map((item) => (typeof item === "string" ? item : textContent(item)))
+		.join("")
+		.replace(/\s+/g, " ")
+		.trim();
+}
+
+function childText(node: AtomNode, localName: string, namespaceURI = ATOM_NAMESPACE): string | undefined {
+	const value = textContent(child(node, localName, namespaceURI));
+	return value || undefined;
+}
+
+function atomEntries(xml: string): AtomNode[] {
+	return parseAtom(xml).flatMap((root) =>
+		root.localName === "feed" && root.namespaceURI === ATOM_NAMESPACE ? children(root, "entry", ATOM_NAMESPACE) : [],
+	);
+}
+
+function attr(node: AtomNode, name: string): string | undefined {
+	return node.attributes[name];
+}
+
+function toMeta(entry: AtomNode): ArxivMeta | undefined {
+	const rawId = childText(entry, "id");
 	const idMatch = rawId ? ID_PATTERN.exec(rawId) : undefined;
 	if (!idMatch?.[1]) return undefined;
 	const id = idMatch[1];
 	const version = idMatch[2];
 
-	const links = [...entry.matchAll(/<link\b([^>]*)\/?>/gi)].map((m) => m[1] ?? "");
-	const href = (predicate: (attrs: string) => boolean): string | undefined => {
-		for (const attrs of links) {
-			if (!predicate(attrs)) continue;
-			const hrefMatch = /href="([^"]+)"/i.exec(attrs);
-			if (hrefMatch?.[1]) return decodeEntities(hrefMatch[1]);
-		}
-		return undefined;
+	const links = children(entry, "link", ATOM_NAMESPACE);
+	const href = (predicate: (link: AtomNode) => boolean): string | undefined => {
+		const link = links.find(predicate);
+		return link ? attr(link, "href") : undefined;
 	};
-
-	const pdfUrl = href((attrs) => /title="pdf"/i.test(attrs)) ?? `https://arxiv.org/pdf/${id}${version ?? ""}`;
+	const pdfUrl = href((link) => attr(link, "title")?.toLowerCase() === "pdf") ?? `https://arxiv.org/pdf/${id}${version ?? ""}`;
 	const absUrl =
-		href((attrs) => /rel="alternate"/i.test(attrs) && /text\/html/i.test(attrs)) ?? `https://arxiv.org/abs/${id}${version ?? ""}`;
-	const htmlUrl = `https://arxiv.org/html/${id}${version ?? ""}`;
-
-	const categories = [...entry.matchAll(/<category\b[^>]*term="([^"]+)"/gi)].map((m) => m[1] ?? "").filter(Boolean);
-	const primary = /<arxiv:primary_category\b[^>]*term="([^"]+)"/i.exec(entry)?.[1];
+		href((link) => attr(link, "rel") === "alternate" && attr(link, "type")?.toLowerCase() === "text/html") ??
+		`https://arxiv.org/abs/${id}${version ?? ""}`;
+	const categories = children(entry, "category", ATOM_NAMESPACE)
+		.map((category) => attr(category, "term"))
+		.filter((value): value is string => Boolean(value));
+	const primaryCategoryNode = child(entry, "primary_category", ARXIV_NAMESPACE);
+	const primaryCategory = primaryCategoryNode ? attr(primaryCategoryNode, "term") : undefined;
 
 	return {
 		id,
 		version,
-		title: tag(entry, "title") ?? id,
-		authors: tagAll(entry, "name"),
-		abstract: tag(entry, "summary") ?? "",
+		title: childText(entry, "title") ?? id,
+		authors: children(entry, "author")
+			.map((author) => childText(author, "name"))
+			.filter((name): name is string => Boolean(name)),
+		abstract: childText(entry, "summary") ?? "",
 		categories,
-		primaryCategory: primary,
-		published: tag(entry, "published"),
-		updated: tag(entry, "updated"),
-		doi: tag(entry, "arxiv:doi"),
-		comment: tag(entry, "arxiv:comment"),
-		journalRef: tag(entry, "arxiv:journal_ref"),
+		primaryCategory,
+		published: childText(entry, "published"),
+		updated: childText(entry, "updated"),
+		doi: childText(entry, "doi", ARXIV_NAMESPACE),
+		comment: childText(entry, "comment", ARXIV_NAMESPACE),
+		journalRef: childText(entry, "journal_ref", ARXIV_NAMESPACE),
 		absUrl,
 		pdfUrl,
-		htmlUrl,
+		htmlUrl: `https://arxiv.org/html/${id}${version ?? ""}`,
 	};
 }
 
@@ -147,7 +200,7 @@ export async function lookupById(idOrUrl: string, options: ArxivApiOptions = {})
 	if (!parsed) throw new Error(`Not an arXiv id or URL: ${idOrUrl}`);
 	const params = new URLSearchParams({ id_list: parsed.id, max_results: "1" });
 	const xml = await fetchAtom(params.toString(), options);
-	const first = entries(xml)[0];
+	const first = atomEntries(xml)[0];
 	const meta = first ? toMeta(first) : undefined;
 	if (!meta) throw new Error(`arXiv returned no entry for ${parsed.id}`);
 	return meta;
@@ -162,7 +215,7 @@ export async function searchByTitle(title: string, limit = 3, options: ArxivApiO
 		.slice(0, 200);
 	const params = new URLSearchParams({ search_query: `ti:"${cleaned}"`, max_results: String(limit) });
 	const xml = await fetchAtom(params.toString(), options);
-	return entries(xml)
+	return atomEntries(xml)
 		.map((entry) => toMeta(entry))
 		.filter((meta): meta is ArxivMeta => Boolean(meta));
 }

@@ -41,20 +41,21 @@ Everything it had to repair is reported back, so you know which parts of the Mar
 
 | Tool | Needed for | Missing → |
 |---|---|---|
-| `parse5` (bundled dependency) | HTML section reading | installed automatically with the package |
+| `parse5` | HTML section reading | installed automatically with the package |
+| `sax` | namespace-aware Atom XML parsing | installed automatically with the package |
 | [pandoc](https://pandoc.org) | LaTeX → Markdown | conversion fails with a clear message |
 | `pdftoppm` (poppler) | PDF page images and figure rasterization | image mode unavailable; figure PDFs stay linked |
 | `pdftotext` (poppler) | PDF page text and approximate section-to-page mapping | PDF text reads and page mapping unavailable |
 
 Run `paper_toolchain` (or ask the agent to check) to see what is available.
 
-`parse5` is installed automatically as a runtime dependency. LaTeX-to-Markdown additionally requires pandoc; Poppler provides optional PDF page extraction, page rendering, and figure rasterization.
+`parse5` parses arXiv HTML sections; `sax` handles the Atom API feed as strict namespace-aware XML. Both runtime packages are installed automatically. LaTeX-to-Markdown additionally requires pandoc; Poppler provides optional PDF page extraction, page rendering, and figure rasterization.
 
 ## Install
 
 ```bash
 pi install ./pi-arxiv          # from a local checkout
-pi install npm:@lineance/pi-arxiv  # after the package is published
+pi install npm:@laboon85/pi-arxiv  # after the package is published
 pi --extension ./pi-arxiv/extensions/index.ts   # try without installing
 ```
 

@@ -90,6 +90,41 @@ describe("lookupById", () => {
 		expect(meta.doi).toBe("10.48550/arXiv.2609.35319");
 	});
 
+	it("resolves prefixed Atom and arXiv namespaces and decodes numeric entities", async () => {
+		const prefixed = `<?xml version="1.0"?>
+<a:feed xmlns:a="http://www.w3.org/2005/Atom" xmlns:x="http://arxiv.org/schemas/atom">
+  <a:entry>
+    <a:id>https://arxiv.org/abs/2609.00001v3</a:id>
+    <a:title>XML &#x3BB; parser &amp; entities</a:title>
+    <a:summary>Prefix-safe metadata.</a:summary>
+    <a:author><a:name>Author</a:name></a:author>
+    <x:doi>10.0000/example</x:doi>
+    <x:primary_category term="cs.XML"/>
+    <a:category term="cs.XML"/>
+    <a:link title="pdf" href="https://arxiv.org/pdf/2609.00001v3"/>
+  </a:entry>
+</a:feed>`;
+		vi.stubGlobal("fetch", stubAtom(prefixed).fetch);
+
+		const meta = await lookupById("2609.00001", FAST);
+		expect(meta.title).toBe("XML λ parser & entities");
+		expect(meta.primaryCategory).toBe("cs.XML");
+		expect(meta.doi).toBe("10.0000/example");
+		expect(meta.pdfUrl).toBe("https://arxiv.org/pdf/2609.00001v3");
+	});
+
+	it("rejects malformed XML instead of partially parsing it", async () => {
+		vi.stubGlobal("fetch", stubAtom("<feed><entry><id>2609.35319</entry></feed>").fetch);
+		await expect(lookupById("2609.35319", FAST)).rejects.toThrow(/Malformed arXiv Atom feed/);
+	});
+
+	it("rejects DTDs in remote Atom feeds", async () => {
+		const xml =
+			'<!DOCTYPE feed [<!ENTITY x "expanded">]><feed xmlns="http://www.w3.org/2005/Atom"><entry><id>2609.35319</id><title>&x;</title></entry></feed>';
+		vi.stubGlobal("fetch", stubAtom(xml).fetch);
+		await expect(lookupById("2609.35319", FAST)).rejects.toThrow(/DOCTYPE is not permitted/);
+	});
+
 	it("collapses whitespace inside a multi-line title", async () => {
 		vi.stubGlobal("fetch", stubAtom(ATOM_ENTRY).fetch);
 		expect((await lookupById("2609.35319", FAST)).title).not.toMatch(/\n|\s{2}/);
