@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.1.1
+
+- Serialize background Markdown conversions so pandoc jobs do not compete for resources.
+- Extend download timeouts, stream large responses, retry alternate arXiv source endpoints, and remove stale partial source extractions.
+- Retry LaTeX conversion without citeproc when bibliography processing fails.
+
 - Split `/arxiv` into `search`, `pull`, `read`, `markdown`, `status`, and `diff` actions; retain bare-id shorthand as a pull alias.
 - Make `arxiv_pull` download-only. Add session-scoped background Markdown conversion and job status tools.
 - Add `arxiv_read` for HTML-first section reading and PDF page text/image output, defaulting to text.

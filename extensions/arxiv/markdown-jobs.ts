@@ -40,7 +40,28 @@ export interface MarkdownJobManager {
 export function createMarkdownJobManager(): MarkdownJobManager {
 	const jobs = new Map<string, MarkdownJob>();
 	const controllers = new Map<string, AbortController>();
+	const pending = new Map<string, { input: MarkdownJobInput; controller: AbortController }>();
 	const activePaperJobs = new Map<string, string>();
+	const queue: string[] = [];
+	let pumping = false;
+
+	async function pump(): Promise<void> {
+		if (pumping) return;
+		pumping = true;
+		try {
+			while (queue.length > 0) {
+				const jobId = queue.shift();
+				if (!jobId) continue;
+				const entry = pending.get(jobId);
+				const job = jobs.get(jobId);
+				if (!entry || !job || job.state === "cancelled") continue;
+				pending.delete(jobId);
+				await run(job, entry.input, entry.controller);
+			}
+		} finally {
+			pumping = false;
+		}
+	}
 
 	function start(input: MarkdownJobInput): MarkdownJob {
 		const activeId = activePaperJobs.get(input.meta.id);
@@ -59,8 +80,10 @@ export function createMarkdownJobManager(): MarkdownJobManager {
 		const controller = new AbortController();
 		jobs.set(job.jobId, job);
 		controllers.set(job.jobId, controller);
+		pending.set(job.jobId, { input, controller });
 		activePaperJobs.set(job.paperId, job.jobId);
-		void run(job, input, controller);
+		queue.push(job.jobId);
+		void pump();
 		return { ...job };
 	}
 
@@ -121,6 +144,15 @@ export function createMarkdownJobManager(): MarkdownJobManager {
 		},
 		shutdown() {
 			for (const controller of controllers.values()) controller.abort();
+			for (const jobId of queue) {
+				const job = jobs.get(jobId);
+				if (job?.state === "queued") {
+					job.state = "cancelled";
+					job.finishedAt = new Date().toISOString();
+				}
+			}
+			queue.length = 0;
+			pending.clear();
 		},
 	};
 }

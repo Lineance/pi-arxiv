@@ -29,9 +29,15 @@ export function isRetryable(error: unknown, status?: number): boolean {
 	if (status !== undefined) return status === 429 || status === 408 || status >= 500;
 	if (!(error instanceof Error)) return false;
 	const code = (error.cause as { code?: string } | undefined)?.code ?? "";
-	if (/UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED/.test(code)) return true;
+	if (
+		/UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_BODY_TIMEOUT|UND_ERR_SOCKET|ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED/.test(
+			code,
+		)
+	)
+		return true;
 	return (
-		/fetch failed|network|socket hang up|aborted/i.test(error.message) && !/abort/i.test(String((error as { name?: string }).name ?? ""))
+		/fetch failed|network|socket hang up|timed out|timeout|aborted/i.test(error.message) &&
+		!/abort/i.test(String((error as { name?: string }).name ?? ""))
 	);
 }
 

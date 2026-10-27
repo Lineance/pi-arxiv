@@ -55,7 +55,8 @@ export async function runPandoc(io: ConvertIO, options: PandocOptions): Promise<
 	}
 
 	const bibliography = await resolveBibliography(options.workDir, options.bibNames);
-	const args = [options.mainTexFile, "-f", "latex", "-t", "gfm", "--wrap=none"];
+	const baseArgs = [options.mainTexFile, "-f", "latex", "-t", "gfm", "--wrap=none"];
+	const args = [...baseArgs];
 	if (bibliography) {
 		args.push("--citeproc", `--bibliography=${bibliography}`);
 	} else {
@@ -66,8 +67,17 @@ export async function runPandoc(io: ConvertIO, options: PandocOptions): Promise<
 		});
 	}
 
-	const result = await io.exec("pandoc", args, { cwd: options.workDir, signal: options.signal, timeout: 300_000 });
+	let result = await io.exec("pandoc", args, { cwd: options.workDir, signal: options.signal, timeout: 300_000 });
 	options.signal?.throwIfAborted();
+	if ((result.code !== 0 || result.killed) && bibliography) {
+		warnings.push({
+			rule: "pandoc",
+			level: "warn",
+			message: "pandoc citeproc conversion failed; retrying without citation processing",
+		});
+		result = await io.exec("pandoc", baseArgs, { cwd: options.workDir, signal: options.signal, timeout: 300_000 });
+		options.signal?.throwIfAborted();
+	}
 	if (result.code !== 0 || result.killed) {
 		warnings.push({
 			rule: "pandoc",

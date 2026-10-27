@@ -3,7 +3,7 @@
  * that makes the whole directory reproducible and auditable.
  */
 
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { ArxivMeta, ConvertStats, ConvertWarning } from "../types.ts";
@@ -78,11 +78,11 @@ export interface PullResult {
 	reused: string[];
 }
 
-const DEFAULT_TIMEOUT_MS = 120_000;
+const DEFAULT_TIMEOUT_MS = 600_000;
 
-/** Per-attempt timeout: a full e-print is ~1 MB, so a generous but finite bound. */
+/** Keep slow e-print transfers alive; the caller's timeout is an overall per-attempt budget. */
 function attemptTimeoutMs(timeoutMs: number): number {
-	return Math.max(15_000, Math.min(timeoutMs, 60_000));
+	return Math.max(15_000, Math.min(timeoutMs, 600_000));
 }
 
 /** A download request: the HTTP options plus the caller's overall budget. */
@@ -94,7 +94,23 @@ async function download(url: string, options: DownloadOptions): Promise<Buffer> 
 		timeoutMs: attemptTimeoutMs(options.timeoutMs),
 		headers: { accept: "*/*", ...options.headers },
 	});
-	const buffer = Buffer.from(await response.arrayBuffer());
+	if (!response.body) {
+		const buffer = Buffer.from(await response.arrayBuffer());
+		if (buffer.length === 0) throw new Error(`empty response for ${url}`);
+		return buffer;
+	}
+	const reader = response.body.getReader();
+	const chunks: Buffer[] = [];
+	try {
+		while (true) {
+			const part = await reader.read();
+			if (part.done) break;
+			if (part.value?.byteLength) chunks.push(Buffer.from(part.value));
+		}
+	} finally {
+		reader.releaseLock();
+	}
+	const buffer = Buffer.concat(chunks);
 	if (buffer.length === 0) throw new Error(`empty response for ${url}`);
 	return buffer;
 }
@@ -168,6 +184,10 @@ function sourceUrl(meta: ArxivMeta, version: string): string {
 	return `https://arxiv.org/e-print/${meta.id}${version}`;
 }
 
+function alternateSourceUrl(meta: ArxivMeta, version: string): string {
+	return `https://export.arxiv.org/e-print/${meta.id}${version}`;
+}
+
 async function matchesManifestArtifact(
 	path: string,
 	previousUrl: string | undefined,
@@ -189,7 +209,13 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 	const sourceDir = join(destDir, "source");
 	const manifestPath = join(destDir, "manifest.json");
 	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-	const downloadOptions: DownloadOptions = { timeoutMs, signal: options.signal, fetchImpl: options.fetchImpl, onRetry: options.onRetry };
+	const downloadOptions: DownloadOptions = {
+		timeoutMs,
+		retries: 0,
+		signal: options.signal,
+		fetchImpl: options.fetchImpl,
+		onRetry: options.onRetry,
+	};
 
 	const warnings: ConvertWarning[] = [];
 	const reused: string[] = [];
@@ -278,13 +304,35 @@ export async function pull(meta: ArxivMeta, options: PullOptions): Promise<PullR
 			if (reusable) {
 				reused.push(archive);
 			} else {
-				await writeFileQueued(archive, await download(archiveUrl, downloadOptions));
+				let payload: Buffer;
+				try {
+					payload = await download(archiveUrl, downloadOptions);
+				} catch (firstError) {
+					const fallbackUrl = alternateSourceUrl(meta, version);
+					if (fallbackUrl === archiveUrl) throw firstError;
+					warnings.push({
+						rule: "pull",
+						level: "info",
+						message: `source endpoint failed; retrying via ${fallbackUrl}`,
+					});
+					payload = await download(fallbackUrl, downloadOptions);
+				}
+				await writeFileQueued(archive, payload);
 			}
 			options.signal?.throwIfAborted();
 			const buffer = await readFile(archive);
 			options.signal?.throwIfAborted();
+			// A prior interrupted/invalid pull may have left source.bin or a partial
+			// extraction behind. Rebuild the directory from the verified archive.
+			await rm(sourceDir, { recursive: true, force: true });
 			const saved = await saveSource(buffer, sourceDir);
 			options.signal?.throwIfAborted();
+			if (
+				!saved.files.some((file) => file.toLowerCase().endsWith(".tex")) &&
+				/^(?:<\?xml\b|<(?:feed|html|!doctype)\b)/i.test(buffer.subarray(0, 512).toString("utf8").trimStart())
+			) {
+				throw new Error("e-print response contained no LaTeX .tex file");
+			}
 			if (saved.note) warnings.push({ rule: "pull", level: "info", message: saved.note });
 			if (saved.skipped.length > 0) {
 				warnings.push({
