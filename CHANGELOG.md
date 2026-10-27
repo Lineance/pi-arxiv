@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.3
+
+- Fix the release workflow's setup-node inputs so the npm publish job can start.
+
 ## 0.1.2
 
 - Align the coverage floor with the lowest supported Node 22 CI lane so release verification uses the actual cross-version baseline.
