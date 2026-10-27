@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.2
+
+- Align the coverage floor with the lowest supported Node 22 CI lane so release verification uses the actual cross-version baseline.
+
 ## 0.1.1
 
 - Serialize background Markdown conversions so pandoc jobs do not compete for resources.

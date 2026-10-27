@@ -1,6 +1,6 @@
 {
 	"name": "@laboon85/pi-arxiv",
-	"version": "0.1.1",
+	"version": "0.1.2",
 	"description": "Pi extension: fetch arXiv papers (PDF + LaTeX e-print) and convert them into clean, KaTeX-safe Markdown.",
 	"type": "module",
 	"license": "MIT",
