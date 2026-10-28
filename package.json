@@ -1,6 +1,10 @@
 {
 	"name": "@laboon85/pi-arxiv",
-	"version": "0.1.3",
+	"version": "0.1.4",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Lineance/pi-arxiv"
+	},
 	"description": "Pi extension: fetch arXiv papers (PDF + LaTeX e-print) and convert them into clean, KaTeX-safe Markdown.",
 	"type": "module",
 	"license": "MIT",

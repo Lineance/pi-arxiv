@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.4
+
+- Add the repository metadata required by npm Trusted Publishing.
+
 ## 0.1.3
 
 - Fix the release workflow's setup-node inputs so the npm publish job can start.
